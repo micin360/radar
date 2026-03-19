@@ -629,8 +629,8 @@ function sizeCanvas() {
 function startTracker() {
   const lat = parseFloat(document.getElementById('tlat').value);
   const lon = parseFloat(document.getElementById('tlon').value);
-  tClose = parseFloat(document.getElementById('tc').value) || 100;
-  tMid   = parseFloat(document.getElementById('tm').value) || 500;
+  tClose = parseFloat(document.getElementById('tc').value) || 10;
+  tMid   = parseFloat(document.getElementById('tm').value) || 100;
 
   const err = document.getElementById('err');
   if (isNaN(lat) || isNaN(lon)) { err.textContent = '⚠ Zadej platné souřadnice!'; return; }
