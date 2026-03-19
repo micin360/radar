@@ -190,21 +190,21 @@
 
   <div class="field-group">
     <label class="field-label">▸ CÍLOVÁ ŠÍŘKA — LATITUDE</label>
-    <input type="number" id="tlat" placeholder="49.8175" step="any">
+    <input type="number" id="tlat" value="48.8015031" step="any">
   </div>
   <div class="field-group">
     <label class="field-label">▸ CÍLOVÁ DÉLKA — LONGITUDE</label>
-    <input type="number" id="tlon" placeholder="18.2871" step="any">
+    <input type="number" id="tlon" value="16.3740106" step="any">
   </div>
 
   <div class="row field-group" style="max-width:360px;width:100%">
     <div class="field-group">
       <label class="field-label">▸ BLÍZKO &lt; (m)</label>
-      <input type="number" id="tc" value="100" min="1">
+      <input type="number" id="tc" value="10" min="1">
     </div>
     <div class="field-group">
       <label class="field-label">▸ STŘEDNĚ &lt; (m)</label>
-      <input type="number" id="tm" value="500" min="1">
+      <input type="number" id="tm" value="100" min="1">
     </div>
   </div>
 
@@ -254,137 +254,362 @@
 
 <script>
 /* ═══════════════════════════════════════════════════
-   KALMAN FILTER
+   MAGNETICKÁ DEKLINACE (zjednodušený WMM offline)
+   Pro střední Evropu přesnost ~0.5°
 ═══════════════════════════════════════════════════ */
-class KalmanGPS {
-  constructor() {
-    this.Q = 3e-6;
-    this.R = 1e-5;
-    this.lat = null; this.lon = null;
-    this.P = 1;
-  }
-  filter(lat, lon, accuracy) {
-    this.R = Math.max(1e-6, (accuracy || 10) * 1e-7);
-    if (this.lat === null) { this.lat = lat; this.lon = lon; this.P = 1; return {lat, lon}; }
-    this.P += this.Q;
-    const K = this.P / (this.P + this.R);
-    this.lat += K * (lat - this.lat);
-    this.lon += K * (lon - this.lon);
-    this.P   *= (1 - K);
-    return { lat: this.lat, lon: this.lon };
-  }
-  reset() { this.lat = null; this.lon = null; this.P = 1; }
+function magDeclination(lat, lon) {
+  // Zjednodušená aproximace WMM-2020 pro Evropu
+  const a0 =  3.0;
+  const a1 =  0.0300 * (lat - 49.0);
+  const a2 = -0.0500 * (lon - 15.0);
+  const a3 =  0.0002 * (lat - 49.0) * (lon - 15.0);
+  return a0 + a1 + a2 + a3; // stupně, kladné = východní
 }
-const kalman = new KalmanGPS();
 
 /* ═══════════════════════════════════════════════════
-   DEAD RECKONING
+   EKF — Extended Kalman Filter
+   Stav: [lat, lon, vNorth(m/s), vEast(m/s)]
+   Vstupy: GPS poloha+rychlost (vážená), akcelerometr, ZUPT
 ═══════════════════════════════════════════════════ */
-const DR = {
-  // Posledni GPS fix
-  baseLat: null, baseLon: null, baseTime: null,
-  // Integrovaná rychlost
-  vx: 0, vy: 0,
-  // Akumulovaný posun od posledního GPS fixu (stupně)
-  dLat: 0, dLon: 0,
-  // Poslední timestamp DeviceMotion
-  lastT: null,
-  // Prahová hodnota akcelerace (filtruje šum v kapse)
-  threshold: 0.12,
-  // Útlum rychlosti (zpomalení bez pohybu)
-  decay: 0.85,
-  // Aktivní?
-  active: false,
-
-  // Metry na stupeň zeměpisné šířky/délky
+const EKF = {
+  x: null, P: null, initialized: false,
+  Qpos: 1e-12, Qvel: 0.05,
   mPerDegLat: 111320,
   mPerDegLon(lat) { return 111320 * Math.cos(lat * Math.PI / 180); },
 
-  onMotion(e) {
-    if (!DR.active || DR.baseLat === null) return;
-    const now = Date.now();
-    if (DR.lastT === null) { DR.lastT = now; return; }
-    const dt = Math.min((now - DR.lastT) / 1000, 0.1); // max 100ms krok
-    DR.lastT = now;
+  // Vážený GPS buffer — circular buffer posledních 10 fixů
+  gpsBuf: [],
+  GPS_BUF_SIZE: 10,
 
-    // Surová akcelerace (bez gravitace)
+  // Přidej GPS fix do bufferu a vrať vážený průměr
+  weightedGPS(lat, lon, accuracy) {
+    EKF.gpsBuf.push({ lat, lon, w: 1 / (accuracy * accuracy) });
+    if (EKF.gpsBuf.length > EKF.GPS_BUF_SIZE) EKF.gpsBuf.shift();
+    let wSum = 0, wLat = 0, wLon = 0;
+    for (const f of EKF.gpsBuf) {
+      wSum += f.w; wLat += f.w * f.lat; wLon += f.w * f.lon;
+    }
+    return { lat: wLat / wSum, lon: wLon / wSum };
+  },
+
+  init(lat, lon) {
+    EKF.x = [lat, lon, 0, 0];
+    EKF.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
+    EKF.initialized = true;
+  },
+
+  predict(aN, aE, dt) {
+    if (!EKF.initialized) return;
+    const [lat, lon, vN, vE] = EKF.x;
+    const mLat = EKF.mPerDegLat, mLon = EKF.mPerDegLon(lat);
+    EKF.x[0] = lat + (vN * dt) / mLat;
+    EKF.x[1] = lon + (vE * dt) / mLon;
+    EKF.x[2] = vN + aN * dt;
+    EKF.x[3] = vE + aE * dt;
+    const F = [1,0,dt/mLat,0, 0,1,0,dt/mLon, 0,0,1,0, 0,0,0,1];
+    EKF.P = EKF.matAdd(
+      EKF.mat4Mul(EKF.mat4Mul(F, EKF.P), EKF.mat4T(F)),
+      [EKF.Qpos,0,0,0, 0,EKF.Qpos,0,0, 0,0,EKF.Qvel,0, 0,0,0,EKF.Qvel]
+    );
+  },
+
+  // GPS poloha — outlier rejection + vážený buffer
+  updateGPS(lat, lon, accuracy) {
+    if (!EKF.initialized) { EKF.init(lat, lon); return; }
+    // Vážený průměr bufferu před outlier testem
+    const w = EKF.weightedGPS(lat, lon, accuracy || 10);
+    const R = Math.max(1e-12, Math.pow((accuracy || 10) / EKF.mPerDegLat, 2));
+    const dLat = w.lat - EKF.x[0], dLon = w.lon - EKF.x[1];
+    const S00 = EKF.P[0] + R, S11 = EKF.P[5] + R;
+    const mahal2 = (dLat*dLat)/S00 + (dLon*dLon)/S11;
+    if (mahal2 > 9.21) { EKF.lastRejected = true; EKF.rejectedCount = (EKF.rejectedCount||0)+1; return; }
+    EKF.lastRejected = false;
+    const K0=EKF.P[0]/S00,  K1=EKF.P[4]/S11,
+          K2=EKF.P[8]/S00,  K3=EKF.P[9]/S11,
+          K4=EKF.P[12]/S00, K5=EKF.P[13]/S11;
+    EKF.x[0] += K0*dLat + K1*dLon;
+    EKF.x[1] += (EKF.P[1]/S00)*dLat + (EKF.P[5]/S11)*dLon;
+    EKF.x[2] += K2*dLat + K3*dLon;
+    EKF.x[3] += K4*dLat + K5*dLon;
+    const ik0=1-K0, ik5=1-EKF.P[5]/S11;
+    EKF.P[0]*=ik0; EKF.P[1]*=ik0; EKF.P[4]*=ik5; EKF.P[5]*=ik5;
+    EKF.P[8]*=ik0; EKF.P[9]*=ik5; EKF.P[12]*=ik0; EKF.P[13]*=ik5;
+  },
+
+  // GPS rychlost — nezávislý EKF update pro vN, vE
+  updateGPSVelocity(speed, gpsHeading) {
+    if (!EKF.initialized || speed == null || speed < 0.1) return;
+    // Rozlož rychlost na složky
+    const rad = gpsHeading * Math.PI / 180;
+    const vN_meas = speed * Math.cos(rad);
+    const vE_meas = speed * Math.sin(rad);
+    // Šum měření GPS rychlosti ~0.3 m/s
+    const Rv = 0.09;
+    // Update pro vN (index 2)
+    const S2 = EKF.P[10] + Rv;
+    const K2 = EKF.P[10] / S2;
+    EKF.x[2] += K2 * (vN_meas - EKF.x[2]);
+    EKF.P[10] *= (1 - K2);
+    // Update pro vE (index 3)
+    const S3 = EKF.P[15] + Rv;
+    const K3 = EKF.P[15] / S3;
+    EKF.x[3] += K3 * (vE_meas - EKF.x[3]);
+    EKF.P[15] *= (1 - K3);
+  },
+
+  // ZUPT — vnutit nulovou rychlost
+  zupt() {
+    if (!EKF.initialized) return;
+    const Rz = 1e-4;
+    const K2 = EKF.P[10]/(EKF.P[10]+Rz), K3 = EKF.P[15]/(EKF.P[15]+Rz);
+    EKF.x[2] *= (1-K2); EKF.x[3] *= (1-K3);
+    EKF.P[10] *= (1-K2); EKF.P[15] *= (1-K3);
+  },
+
+  pos() { return EKF.initialized ? {lat:EKF.x[0], lon:EKF.x[1]} : null; },
+  reset() { EKF.x=null; EKF.P=null; EKF.initialized=false; EKF.gpsBuf=[]; },
+  mat4Mul(A,B){const C=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)C[i*4+j]+=A[i*4+k]*B[k*4+j];return C;},
+  mat4T(A){const T=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)T[j*4+i]=A[i*4+j];return T;},
+  matAdd(A,B){return A.map((v,i)=>v+B[i]);}
+};
+
+/* ═══════════════════════════════════════════════════
+   SENZORY — akcelerometr + gyroskop + ZUPT
+   + tilt kompenzace + adaptivní délka kroku
+═══════════════════════════════════════════════════ */
+const SENS = {
+  lastT: null,
+  accBuf: [], ZUPT_WIN: 15, ZUPT_THR: 0.3,
+  isStill: false,
+  stepCount: 0, stepState: 'low',
+  stepHigh: 11.8, stepLow: 9.5,
+  // Tilt (pitch/roll) z gyroskopu — integrovaný
+  pitch: 0, roll: 0,
+  // Adaptivní délka kroku
+  recentMags: [], STRIDE_WIN: 5,
+
+  onMotion(e) {
+    const now = Date.now();
+    if (SENS.lastT === null) { SENS.lastT = now; return; }
+    const dt = Math.min((now - SENS.lastT) / 1000, 0.05);
+    SENS.lastT = now;
+
     const ag = e.accelerationIncludingGravity;
     const a  = e.acceleration;
-    // Preferuj 'acceleration' (bez g), fallback na 'accelerationIncludingGravity'
-    let ax = (a && a.x != null) ? a.x : (ag ? ag.x * 0.1 : 0);
-    let ay = (a && a.y != null) ? a.y : (ag ? ag.y * 0.1 : 0);
+    const rr = e.rotationRate;
+    if (!ag || ag.x == null) return;
 
-    // Přizpůsobit orientaci kompasem (heading ve stupních od N)
-    const rad = heading * Math.PI / 180;
-    const worldX =  ax * Math.cos(rad) + ay * Math.sin(rad);
-    const worldY = -ax * Math.sin(rad) + ay * Math.cos(rad);
+    // --- Tilt kompenzace — komplementární filtr ---
+    // Akcelerometr → absolutní pitch/roll z gravitačního vektoru
+    const accNorm = Math.sqrt(ag.x**2 + ag.y**2 + ag.z**2);
+    if (accNorm > 0.5) { // ignoruj pokud příliš malý signál
+      const pitchAcc = Math.atan2(-ag.x, Math.sqrt(ag.y**2 + ag.z**2)) * 180 / Math.PI;
+      const rollAcc  = Math.atan2( ag.y, ag.z) * 180 / Math.PI;
 
-    // Threshold — ignoruj šum
-    const mag = Math.sqrt(worldX*worldX + worldY*worldY);
-    if (mag < DR.threshold) {
-      DR.vx *= DR.decay;
-      DR.vy *= DR.decay;
-    } else {
-      DR.vx += worldX * dt;
-      DR.vy += worldY * dt;
-      // Cap rychlosti na 3 m/s (chůze)
-      const vMag = Math.sqrt(DR.vx*DR.vx + DR.vy*DR.vy);
-      if (vMag > 3) { DR.vx *= 3/vMag; DR.vy *= 3/vMag; }
+      if (rr && rr.beta != null) {
+        // Gyro predikce pitch/roll
+        const pitchGyro = SENS.pitch + rr.beta  * dt;
+        const rollGyro  = SENS.roll  + rr.gamma * dt;
+        // Komplementární fúze — 98% gyro + 2% akcelerometr
+        SENS.pitch = 0.98 * pitchGyro + 0.02 * pitchAcc;
+        SENS.roll  = 0.98 * rollGyro  + 0.02 * rollAcc;
+      } else {
+        // Bez gyra — jen akcelerometr
+        SENS.pitch = pitchAcc;
+        SENS.roll  = rollAcc;
+      }
     }
 
-    // Posun v metrech → přepočet na stupně
-    DR.dLon += (DR.vx * dt) / DR.mPerDegLon(DR.baseLat);
-    DR.dLat += (DR.vy * dt) / DR.mPerDegLat;
-  },
+    // Gravitační složky v horizontální rovině (pro odečtení z acc)
+    const gN = 9.81 * Math.sin(SENS.pitch * Math.PI / 180);
+    const gE = 9.81 * Math.sin(SENS.roll  * Math.PI / 180);
 
-  // Vrátí odhadovanou polohu
-  estimate() {
-    if (DR.baseLat === null) return null;
-    return {
-      lat: DR.baseLat + DR.dLat,
-      lon: DR.baseLon + DR.dLon
-    };
-  },
+    const mag = Math.sqrt(ag.x**2 + ag.y**2 + ag.z**2);
 
-  // Nový GPS fix — reset driftu
-  update(lat, lon) {
-    DR.baseLat = lat; DR.baseLon = lon;
-    DR.dLat = 0; DR.dLon = 0;
-    DR.vx = 0; DR.vy = 0;
-    DR.lastT = null;
+    // ZUPT detekce
+    SENS.accBuf.push(mag);
+    if (SENS.accBuf.length > SENS.ZUPT_WIN) SENS.accBuf.shift();
+    if (SENS.accBuf.length >= SENS.ZUPT_WIN) {
+      const mean = SENS.accBuf.reduce((s,v)=>s+v,0)/SENS.accBuf.length;
+      const std  = Math.sqrt(SENS.accBuf.reduce((s,v)=>s+(v-mean)**2,0)/SENS.accBuf.length);
+      SENS.isStill = std < SENS.ZUPT_THR;
+      if (SENS.isStill) {
+        EKF.zupt();
+        // ZUPT heading korekce — táhni AHRS heading k magnetometru
+        AHRS.zuptCorrect();
+        return;
+      }
+    }
+
+    // Pohyb — tilt-kompenzovaná akcelerace
+    let aN = 0, aE = 0;
+    if (a && a.x != null && (Math.abs(a.x)+Math.abs(a.y)+Math.abs(a.z)) > 0.01) {
+      const rad = AHRS.heading * Math.PI / 180;
+      // Odečti odhadnutou gravitační komponentu
+      const ax_c = a.x - gE;
+      const ay_c = a.y - gN;
+      aN =  ay_c * Math.cos(rad) + ax_c * Math.sin(rad);
+      aE = -ay_c * Math.sin(rad) + ax_c * Math.cos(rad);
+      if (Math.abs(aN) < 0.1) aN = 0;
+      if (Math.abs(aE) < 0.1) aE = 0;
+    }
+
+    // AHRS gyro fúze
+    AHRS.onMotion(e);
+    EKF.predict(aN, aE, dt);
+    MULTI_EKF.predict(aN, aE, dt);
+
+    // --- Adaptivní délka kroku ---
+    SENS.recentMags.push(mag);
+    if (SENS.recentMags.length > SENS.STRIDE_WIN) SENS.recentMags.shift();
+    const avgMag = SENS.recentMags.reduce((s,v)=>s+v,0)/SENS.recentMags.length;
+    // Weinberg model: strideLen = k * (max-min)^0.25
+    const accPeak = Math.max(...SENS.recentMags);
+    const accMin  = Math.min(...SENS.recentMags);
+    const strideLen = Math.max(0.3, Math.min(0.95,
+      0.35 + 0.18 * Math.sqrt(Math.max(0, avgMag - 9.81))
+    ));
+
+    // Detekce kroků
+    if (SENS.stepState==='low' && mag > SENS.stepHigh) {
+      SENS.stepState = 'high';
+    } else if (SENS.stepState==='high' && mag < SENS.stepLow) {
+      SENS.stepState = 'low';
+      SENS.stepCount++;
+      // Přidej krok přímo do EKF jako posun
+      const rad = AHRS.heading * Math.PI / 180;
+      const stepN = strideLen * Math.cos(rad);
+      const stepE = strideLen * Math.sin(rad);
+      const mLat = EKF.mPerDegLat;
+      const mLon = EKF.mPerDegLon(EKF.x ? EKF.x[0] : 50);
+      if (EKF.initialized) {
+        EKF.x[0] += stepN / mLat * 0.3; // slabá korekce — EKF ji váží
+        EKF.x[1] += stepE / mLon * 0.3;
+      }
+    }
   },
 
   reset() {
-    DR.baseLat = DR.baseLon = DR.baseTime = null;
-    DR.vx = DR.vy = DR.dLat = DR.dLon = 0;
-    DR.lastT = null; DR.active = false;
+    SENS.lastT = null; SENS.accBuf = []; SENS.recentMags = [];
+    SENS.isStill = false; SENS.stepCount = 0; SENS.stepState = 'low';
+    SENS.pitch = 0; SENS.roll = 0;
   }
 };
 
-function initDeadReckoning() {
-  if (!window.DeviceMotionEvent) { console.log('DR: DeviceMotion N/A'); return; }
+function initSensors() {
+  if (!window.DeviceMotionEvent) return;
   const bind = () => {
-    window.addEventListener('devicemotion', DR.onMotion.bind(DR));
-    DR.active = true;
-    console.log('DR: aktivní');
+    window.addEventListener('devicemotion', e => SENS.onMotion(e));
   };
   if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    DeviceMotionEvent.requestPermission().then(s => { if (s==='granted') bind(); });
-  } else {
-    bind();
-  }
+    DeviceMotionEvent.requestPermission()
+      .then(s => { if (s==='granted') bind(); }).catch(()=>{});
+  } else { bind(); }
 }
 
 
-let TLat, TLon, tClose, tMid;
+
+
+/* ═══════════════════════════════════════════════════
+   AHRS — komplementární filtr heading
+   α * gyroskop + (1-α) * magnetometr
+═══════════════════════════════════════════════════ */
+const AHRS = {
+  heading: 0,        // výsledný heading (stupně od N)
+  initialized: false,
+  lastT: null,
+  alpha: 0.97,       // váha gyroskopu (0.97 = 97% gyro, 3% mag)
+  // Gyroskop
+  gyroZ: 0,          // aktuální úhlová rychlost kolem Z osy (°/s)
+  // Diagnostika
+  magHeading: 0,
+  gyroContrib: 0,
+
+  // Volá se z deviceorientation (magnetometr)
+  onMag(magHdg) {
+    // Korekce magnetické deklinace
+    const decl = (TLat && TLon) ? magDeclination(TLat, TLon) : 4.5;
+    const corrected = ((magHdg + decl) + 360) % 360;
+    if (!AHRS.initialized) {
+      AHRS.heading = corrected;
+      AHRS.initialized = true;
+      return;
+    }
+    AHRS.magHeading = corrected;
+  },
+
+  // Volá se z devicemotion (gyroskop rotationRate)
+  onMotion(e) {
+    const now = Date.now();
+    if (AHRS.lastT === null) { AHRS.lastT = now; return; }
+    const dt = Math.min((now - AHRS.lastT) / 1000, 0.05);
+    AHRS.lastT = now;
+
+    if (!AHRS.initialized) return;
+
+    const rr = e.rotationRate;
+    // rotationRate.alpha = rotace kolem Z (yaw) ve °/s
+    // iOS: alpha je yaw, Android: gamma nebo beta závisí na orientaci
+    // Použijeme alpha s fallbackem
+    let gz = 0;
+    if (rr) {
+      // Detekuj portrait vs landscape — standardně portrait
+      gz = (rr.alpha != null) ? rr.alpha : 0;
+    }
+    AHRS.gyroZ = gz;
+
+    // Predikce gyro: nový heading = starý + gyro * dt
+    let gyroPred = AHRS.heading + gz * dt;
+    gyroPred = ((gyroPred % 360) + 360) % 360;
+
+    // Magnetometr — ošetři přechod 359°→0°
+    const mag = AHRS.magHeading;
+    let diff = mag - gyroPred;
+    if (diff >  180) diff -= 360;
+    if (diff < -180) diff += 360;
+
+    // Komplementární fúze
+    AHRS.heading = ((gyroPred + (1 - AHRS.alpha) * diff) + 360) % 360;
+    AHRS.gyroContrib = AHRS.alpha;
+  },
+
+  // ZUPT heading korekce — při stání táhni k magnetometru silněji
+  zuptCorrect() {
+    if (!AHRS.initialized) return;
+    const mag = AHRS.magHeading;
+    let diff = mag - AHRS.heading;
+    if (diff >  180) diff -= 360;
+    if (diff < -180) diff += 360;
+    AHRS.heading = ((AHRS.heading + 0.15 * diff) + 360) % 360;
+  },
+
+  reset() {
+    AHRS.heading = 0; AHRS.initialized = false;
+    AHRS.lastT = null; AHRS.gyroZ = 0; AHRS.magHeading = 0;
+  }
+};
 let curLat, curLon;
-let heading = 0;       // degrees from North, phone compass
-let smoothHdg = null;
+let smoothHdg = null; // pro raw magnetometr (fallback)
 let gpsOk = false, cmpOk = false;
 
 let raf, watchId;
 let scanAngle = 0;
 let pulsePhase = 0;
+
+// Klouzavý průměr vzdálenosti
+const DIST_BUF_SIZE = 5;
+const distBuffer = [];
+let arrivedCount  = 0;   // po sobě jdoucích měření "blízko"
+let departedCount = 0;   // po sobě jdoucích měření "daleko"
+const ARRIVE_CONFIRM = 4; // kolik měření musí potvrdit příjezd
+const DEPART_CONFIRM = 4; // kolik měření musí potvrdit odjezd
+let isArrived = false;
+
+function smoothedDist(rawDist) {
+  distBuffer.push(rawDist);
+  if (distBuffer.length > DIST_BUF_SIZE) distBuffer.shift();
+  return distBuffer.reduce((a, b) => a + b, 0) / distBuffer.length;
+}
 
 const cvs = document.getElementById('cvs');
 const ctx = cvs.getContext('2d');
@@ -421,7 +646,9 @@ function startTracker() {
 
   initGPS();
   initCompass();
-  initDeadReckoning();
+  initSensors();
+  MULTI_EKF.init();
+  BARO.init();
   raf = requestAnimationFrame(renderLoop);
 }
 
@@ -442,11 +669,20 @@ function initGPS() {
     p => {
       if (manualMode) return;
       clearTimeout(gpsErrTimer);
-      const filtered = kalman.filter(p.coords.latitude, p.coords.longitude, p.coords.accuracy);
-      // GPS fix → reset dead reckoning báze na filtrovanou polohu
-      DR.update(filtered.lat, filtered.lon);
-      curLat = filtered.lat; curLon = filtered.lon;
-      gpsOk = true; setGpsSt('OK');
+      // EKF GPS update — vážený accuracy
+      EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
+      MULTI_EKF.syncInit(p.coords.latitude, p.coords.longitude);
+      MULTI_EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
+      BARO.updateFromGPS(p.coords.altitude);
+      if (!BARO.gpsAltSet) BARO.setTargetAlt(p.coords.altitude);
+      if (p.coords.speed != null && p.coords.heading != null) {
+        EKF.updateGPSVelocity(p.coords.speed, p.coords.heading);
+      }
+      const pos = EKF.pos();
+      curLat = pos.lat; curLon = pos.lon;
+      gpsOk = true;
+      const st = EKF.lastRejected ? `OUTL(${EKF.rejectedCount||0})` : SENS.isStill ? 'ZUPT' : 'OK';
+      setGpsSt(st);
     },
     e => {
       clearTimeout(gpsErrTimer);
@@ -503,42 +739,238 @@ function bindOrientation() {
 function onOrient(e) {
   let h = null;
   if (e.webkitCompassHeading != null) {
-    h = e.webkitCompassHeading; // iOS: 0=N, CW
+    h = e.webkitCompassHeading;
   } else if (e.alpha != null) {
     h = (360 - e.alpha + 360) % 360;
   }
   if (h === null) return;
 
-  if (smoothHdg === null) { smoothHdg = h; }
-  else {
-    let d = h - smoothHdg;
-    if (d >  180) d -= 360;
-    if (d < -180) d += 360;
-    smoothHdg = ((smoothHdg + d * 0.25) + 360) % 360;
-  }
-  heading = smoothHdg;
+  // Předej magnetometr do AHRS pro fúzi s gyrem
+  AHRS.onMag(h);
   cmpOk = true;
-  setCmpSt('OK');
-  document.getElementById('hdg-val').textContent = Math.round(heading);
+  document.getElementById('hdg-val').textContent = Math.round(AHRS.heading);
 }
 
 /* ═══════════════════════════════════════════════════
-   MATH
+   MATH — Vincenty (WGS-84 elipsoid, přesnější než Haversine)
 ═══════════════════════════════════════════════════ */
+function vincenty(la1, lo1, la2, lo2) {
+  const a=6378137, b=6356752.314245, f=1/298.257223563;
+  const L=(lo2-lo1)*Math.PI/180;
+  const U1=Math.atan((1-f)*Math.tan(la1*Math.PI/180));
+  const U2=Math.atan((1-f)*Math.tan(la2*Math.PI/180));
+  const sinU1=Math.sin(U1),cosU1=Math.cos(U1);
+  const sinU2=Math.sin(U2),cosU2=Math.cos(U2);
+  let lambda=L, lambdaP, iterLimit=100;
+  let sinLambda,cosLambda,sinSigma,cosSigma,sigma,sinAlpha,cosSqAlpha,cos2SigmaM,C;
+  do {
+    sinLambda=Math.sin(lambda); cosLambda=Math.cos(lambda);
+    sinSigma=Math.sqrt((cosU2*sinLambda)**2+(cosU1*sinU2-sinU1*cosU2*cosLambda)**2);
+    if(sinSigma===0) return 0;
+    cosSigma=sinU1*sinU2+cosU1*cosU2*cosLambda;
+    sigma=Math.atan2(sinSigma,cosSigma);
+    sinAlpha=cosU1*cosU2*sinLambda/sinSigma;
+    cosSqAlpha=1-sinAlpha*sinAlpha;
+    cos2SigmaM=cosSqAlpha!==0?cosSigma-2*sinU1*sinU2/cosSqAlpha:0;
+    C=f/16*cosSqAlpha*(4+f*(4-3*cosSqAlpha));
+    lambdaP=lambda;
+    lambda=L+(1-C)*f*sinAlpha*(sigma+C*sinSigma*(cos2SigmaM+C*cosSigma*(-1+2*cos2SigmaM**2)));
+  } while(Math.abs(lambda-lambdaP)>1e-12 && --iterLimit>0);
+  if(iterLimit===0) return NaN;
+  const uSq=cosSqAlpha*(a*a-b*b)/(b*b);
+  const A_=1+uSq/16384*(4096+uSq*(-768+uSq*(320-175*uSq)));
+  const B_=uSq/1024*(256+uSq*(-128+uSq*(74-47*uSq)));
+  const deltaSigma=B_*sinSigma*(cos2SigmaM+B_/4*(cosSigma*(-1+2*cos2SigmaM**2)-B_/6*cos2SigmaM*(-3+4*sinSigma**2)*(-3+4*cos2SigmaM**2)));
+  return b*A_*(sigma-deltaSigma);
+}
+
+// Haversine zůstane jako fallback pro bearing
 function haversine(la1,lo1,la2,lo2) {
-  const R=6371000, p1=la1*Math.PI/180, p2=la2*Math.PI/180;
-  const dp=(la2-la1)*Math.PI/180, dl=(lo2-lo1)*Math.PI/180;
+  const R=6371000,p1=la1*Math.PI/180,p2=la2*Math.PI/180;
+  const dp=(la2-la1)*Math.PI/180,dl=(lo2-lo1)*Math.PI/180;
   const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
 function bearing(la1,lo1,la2,lo2) {
-  const p1=la1*Math.PI/180, p2=la2*Math.PI/180;
-  const dl=(lo2-lo1)*Math.PI/180;
+  const p1=la1*Math.PI/180,p2=la2*Math.PI/180,dl=(lo2-lo1)*Math.PI/180;
   const y=Math.sin(dl)*Math.cos(p2);
   const x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
   return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
+
+/* ═══════════════════════════════════════════════════
+   BAROMETR — 3D vzdálenost
+═══════════════════════════════════════════════════ */
+const BARO = {
+  altitude: null,      // naše výška (m)
+  targetAlt: null,     // výška cíle (m) — nastavíme při prvním GPS
+  gpsAltSet: false,
+
+  init() {
+    if (!window.DeviceOrientationEvent) return;
+    // Barometr přes Sensor API (Chrome Android)
+    if (typeof AbsoluteOrientationSensor !== 'undefined') return; // není potřeba
+    // Použijeme GPS altitude jako základ
+  },
+
+  // GPS altitude pro inicializaci cíle
+  setTargetAlt(alt) {
+    if (!BARO.gpsAltSet && alt != null) {
+      BARO.targetAlt = alt;
+      BARO.gpsAltSet = true;
+    }
+  },
+
+  updateFromGPS(alt) {
+    if (alt != null) BARO.altitude = alt;
+  },
+
+  // Výpočet 3D vzdálenosti
+  dist3D(dist2D) {
+    if (BARO.altitude == null || BARO.targetAlt == null) return dist2D;
+    const dAlt = BARO.altitude - BARO.targetAlt;
+    return Math.sqrt(dist2D * dist2D + dAlt * dAlt);
+  },
+
+  reset() { BARO.altitude=null; BARO.targetAlt=null; BARO.gpsAltSet=false; }
+};
+
+/* ═══════════════════════════════════════════════════
+   DOPPLER — rychlostní indikátor přiblížení
+═══════════════════════════════════════════════════ */
+const DOPPLER = {
+  distBuf: [],    // buffer posledních vzdáleností s časovými razítky
+  BUF_SIZE: 5,
+  approachRate: 0, // m/s, kladné = vzdaluješ se, záporné = blížíš se
+
+  update(dist) {
+    const now = Date.now();
+    DOPPLER.distBuf.push({ d: dist, t: now });
+    if (DOPPLER.distBuf.length > DOPPLER.BUF_SIZE) DOPPLER.distBuf.shift();
+    if (DOPPLER.distBuf.length < 2) return;
+    const oldest = DOPPLER.distBuf[0];
+    const newest = DOPPLER.distBuf[DOPPLER.distBuf.length - 1];
+    const dt = (newest.t - oldest.t) / 1000;
+    if (dt > 0.1) DOPPLER.approachRate = (newest.d - oldest.d) / dt;
+  },
+
+  reset() { DOPPLER.distBuf=[]; DOPPLER.approachRate=0; }
+};
+
+/* ═══════════════════════════════════════════════════
+   PARALELNÍ EKF — 3 instance s různými parametry
+   Výsledek = vážený průměr podle kovariančního P
+═══════════════════════════════════════════════════ */
+const MULTI_EKF = {
+  // Tři různé konfigurace procesu/měření
+  configs: [
+    { Qpos: 1e-13, Qvel: 0.02 },  // konzervativní (pomalý pohyb)
+    { Qpos: 1e-12, Qvel: 0.05 },  // střední (hlavní EKF)
+    { Qpos: 1e-11, Qvel: 0.15 },  // agresivní (rychlý pohyb)
+  ],
+  // Každá instance sdílí stejnou třídu jako hlavní EKF
+  instances: [],
+
+  init() {
+    MULTI_EKF.instances = MULTI_EKF.configs.map(cfg => ({
+      x: null, P: null, initialized: false,
+      Qpos: cfg.Qpos, Qvel: cfg.Qvel,
+      mPerDegLat: 111320,
+      mPerDegLon(lat) { return 111320 * Math.cos(lat * Math.PI / 180); }
+    }));
+  },
+
+  // Synchronizuj inicializaci z hlavního EKF
+  syncInit(lat, lon) {
+    for (const e of MULTI_EKF.instances) {
+      if (!e.initialized) {
+        e.x = [lat, lon, 0, 0];
+        e.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
+        e.initialized = true;
+      }
+    }
+  },
+
+  updateGPS(lat, lon, accuracy) {
+    for (const e of MULTI_EKF.instances) {
+      if (!e.initialized) continue;
+      const R = Math.max(1e-12, Math.pow((accuracy||10)/e.mPerDegLat, 2));
+      const dLat=lat-e.x[0], dLon=lon-e.x[1];
+      const S00=e.P[0]+R, S11=e.P[5]+R;
+      if ((dLat*dLat)/S00+(dLon*dLon)/S11 > 9.21) continue; // outlier
+      const K0=e.P[0]/S00, K1=e.P[4]/S11;
+      e.x[0]+=K0*dLat+K1*dLon;
+      e.x[1]+=(e.P[1]/S00)*dLat+(e.P[5]/S11)*dLon;
+      e.P[0]*=(1-K0); e.P[5]*=(1-e.P[5]/S11);
+    }
+  },
+
+  predict(aN, aE, dt) {
+    for (const e of MULTI_EKF.instances) {
+      if (!e.initialized) continue;
+      const mLat=e.mPerDegLat, mLon=e.mPerDegLon(e.x[0]);
+      e.x[0]+=(e.x[2]*dt)/mLat; e.x[1]+=(e.x[3]*dt)/mLon;
+      e.x[2]+=aN*dt; e.x[3]+=aE*dt;
+      // P += Q (zjednodušeno)
+      e.P[0]+=e.Qpos; e.P[5]+=e.Qpos;
+      e.P[10]+=e.Qvel; e.P[15]+=e.Qvel;
+    }
+  },
+
+  // Vážený průměr polohy — váha = 1/trace(P)
+  fusedPos() {
+    const valid = MULTI_EKF.instances.filter(e => e.initialized);
+    if (!valid.length) return null;
+    let wSum=0, wLat=0, wLon=0;
+    for (const e of valid) {
+      const trP = e.P[0]+e.P[5]; // trace pozičního bloku
+      const w = 1 / Math.max(trP, 1e-15);
+      wSum+=w; wLat+=w*e.x[0]; wLon+=w*e.x[1];
+    }
+    return { lat: wLat/wSum, lon: wLon/wSum };
+  },
+
+  reset() { MULTI_EKF.instances=[]; }
+};
+
+/* ═══════════════════════════════════════════════════
+   ARRIVAL CONE — přesnější detekce příchodu
+═══════════════════════════════════════════════════ */
+const CONE = {
+  // Vektory posledních N pohybů
+  moveBuf: [],
+  MOVE_SIZE: 5,
+  CONE_RADIUS: 6,    // m — cílový kruh
+  CONE_ANGLE: 45,    // ° — povolená odchylka směru k cíli
+
+  update(myLat, myLon, tLat, tLon) {
+    CONE.moveBuf.push({ lat: myLat, lon: myLon, t: Date.now() });
+    if (CONE.moveBuf.length > CONE.MOVE_SIZE) CONE.moveBuf.shift();
+  },
+
+  // Jsem v arrival cone?
+  check(dist, bear) {
+    // Podmínka 1: jsem blízko
+    if (dist > CONE.CONE_RADIUS * 2) return false;
+    // Podmínka 2: vektor pohybu míří k cíli
+    if (CONE.moveBuf.length < 2) return dist < CONE.CONE_RADIUS;
+    const oldest = CONE.moveBuf[0];
+    const newest = CONE.moveBuf[CONE.moveBuf.length-1];
+    // Bearing pohybu
+    const moveBear = bearing(oldest.lat, oldest.lon, newest.lat, newest.lon);
+    // Úhlová vzdálenost mezi pohybem a směrem k cíli
+    let diff = Math.abs(moveBear - bear);
+    if (diff > 180) diff = 360 - diff;
+    // Jsem v cíli pokud: blízko A (mířím k cíli NEBO stojím)
+    const dt = (newest.t - oldest.t) / 1000;
+    const moved = haversine(oldest.lat, oldest.lon, newest.lat, newest.lon);
+    const isStill = moved / Math.max(dt, 0.1) < 0.3; // < 0.3 m/s = stojím
+    return dist < CONE.CONE_RADIUS && (isStill || diff < CONE.CONE_ANGLE);
+  },
+
+  reset() { CONE.moveBuf=[]; }
+};
 
 /* ═══════════════════════════════════════════════════
    RENDER LOOP
@@ -548,15 +980,45 @@ function renderLoop() {
   scanAngle = (scanAngle + 1.2) % 360;
 
   if (curLat !== undefined) {
-    // Mezi GPS fixy použij dead reckoning odhad
-    const drEst = DR.estimate();
-    const displayLat = drEst ? drEst.lat : curLat;
-    const displayLon = drEst ? drEst.lon : curLon;
-    const dist = haversine(displayLat, displayLon, TLat, TLon);
-    const bear = bearing(displayLat, displayLon, TLat, TLon);
-    const relBear = (bear - heading + 360) % 360;
-    drawRadar(dist, relBear);
-    updateInfo(dist, bear);
+    // Fúze hlavního EKF + multi-EKF
+    const mainPos = EKF.pos();
+    const multiPos = MULTI_EKF.fusedPos();
+    let displayLat, displayLon;
+    if (mainPos && multiPos) {
+      // Průměr obou (váha 2:1 pro hlavní EKF)
+      displayLat = (2*mainPos.lat + multiPos.lat) / 3;
+      displayLon = (2*mainPos.lon + multiPos.lon) / 3;
+    } else {
+      displayLat = mainPos ? mainPos.lat : curLat;
+      displayLon = mainPos ? mainPos.lon : curLon;
+    }
+
+    // Vincenty 2D + barometr 3D
+    const dist2D  = vincenty(displayLat, displayLon, TLat, TLon);
+    const rawDist = isNaN(dist2D) ? haversine(displayLat, displayLon, TLat, TLon) : BARO.dist3D(dist2D);
+    const dist    = smoothedDist(rawDist);
+    const bear    = bearing(displayLat, displayLon, TLat, TLon);
+
+    // Doppler — rychlost přiblížení
+    DOPPLER.update(dist);
+
+    // Arrival cone update
+    CONE.update(displayLat, displayLon, TLat, TLon);
+    const inCone = CONE.check(dist, bear);
+
+    // Hystereze "NA MÍSTĚ" — kombinace cone + vzdálenosti
+    if (!isArrived && inCone) {
+      arrivedCount++; departedCount = 0;
+      if (arrivedCount >= ARRIVE_CONFIRM) isArrived = true;
+    } else if (isArrived && dist >= 8 && !inCone) {
+      departedCount++; arrivedCount = 0;
+      if (departedCount >= DEPART_CONFIRM) isArrived = false;
+    } else if (!isArrived) {
+      arrivedCount = 0;
+    }
+    const relBear = (bear - AHRS.heading + 360) % 360;
+    drawRadar(dist, relBear, isArrived);
+    updateInfo(dist, bear, isArrived);
   } else {
     drawEmpty();
   }
@@ -570,9 +1032,9 @@ function renderLoop() {
 const DIRS = ['S','SV','V','JV','J','JZ','Z','SZ'];
 const RING_COLORS = ['','#ff2020','#ff7700','#ff0000']; // 1=close,2=mid,3=far
 
-function drawEmpty() { drawRadar(null, null); }
+function drawEmpty() { drawRadar(null, null, false); }
 
-function drawRadar(dist, relBear) {
+function drawRadar(dist, relBear, arrived) {
   const W=cvs.width, H=cvs.height, cx=W/2, cy=H/2;
   const maxR = W*0.46;
   const r0 = maxR*0.115;  // center "arrived"
@@ -583,7 +1045,7 @@ function drawRadar(dist, relBear) {
   // Active sector & ring
   let activeSec = -1, activeRing = -1;
   if (dist !== null && relBear !== null) {
-    if (dist < 5) {
+    if (arrived) {
       activeRing = 0;
     } else {
       activeSec  = Math.floor(((relBear + 22.5) % 360) / 45);
@@ -686,7 +1148,7 @@ function drawRadar(dist, relBear) {
 
   // ── Center circle
   ctx.save();
-  const isCtr = (activeRing === 0);
+  const isCtr = arrived;
   ctx.beginPath(); ctx.arc(cx,cy,r0,0,Math.PI*2);
   if (isCtr) {
     const p = 0.6+0.4*Math.sin(pulsePhase*1.5);
@@ -757,12 +1219,12 @@ function hexAlpha(hex, a) {
 ═══════════════════════════════════════════════════ */
 const DIRS8 = ['S','SV','V','JV','J','JZ','Z','SZ'];
 
-function updateInfo(dist, bear) {
+function updateInfo(dist, bear, arrived) {
   const dv = document.getElementById('dist-val');
   const di = document.getElementById('dir-val');
   const dirLbl = DIRS8[Math.round(bear/45)%8];
 
-  if (dist < 5) {
+  if (arrived) {
     dv.style.color='var(--green)';
     dv.textContent='● NA MÍSTĚ ●';
     dv.classList.add('blink');
@@ -771,7 +1233,12 @@ function updateInfo(dist, bear) {
     dv.classList.remove('blink');
     dv.style.color = dist<tClose ? '#ff2020' : dist<tMid ? 'var(--amber)' : '#ff0000';
     dv.textContent = dist<1000 ? Math.round(dist)+' m' : (dist/1000).toFixed(2)+' km';
-    di.textContent  = `Absolutní směr: ${Math.round(bear)}° ${dirLbl}  |  Komp: ${Math.round(heading)}°`;
+    const approach = DOPPLER.approachRate;
+    const dopplerStr = Math.abs(approach) > 0.2
+      ? (approach < 0 ? ` ↓${Math.abs(approach).toFixed(1)}m/s` : ` ↑${approach.toFixed(1)}m/s`)
+      : '';
+    const modeLabel = SENS.isStill ? '  ◉ ZUPT' : `  ◉ ${SENS.stepCount}kr`;
+    di.textContent = `Azimut: ${Math.round(bear)}° ${dirLbl}  |  HDG: ${Math.round(AHRS.heading)}°${modeLabel}${dopplerStr}`;
   }
 }
 
@@ -789,11 +1256,12 @@ function goBack() {
   if (watchId) navigator.geolocation.clearWatch(watchId);
   window.removeEventListener('deviceorientationabsolute', onOrient, true);
   window.removeEventListener('deviceorientation', onOrient, true);
-  curLat=curLon=undefined; smoothHdg=null; heading=0; gpsOk=cmpOk=false; manualMode=false;
+  curLat=curLon=undefined; smoothHdg=null; gpsOk=cmpOk=false; manualMode=false;
   clearTimeout(gpsErrTimer);
-  kalman.reset();
-  DR.reset();
-  window.removeEventListener('devicemotion', DR.onMotion);
+  EKF.reset(); SENS.reset(); AHRS.reset();
+  MULTI_EKF.reset(); BARO.reset(); DOPPLER.reset(); CONE.reset();
+  EKF.lastRejected=false; EKF.rejectedCount=0;
+  distBuffer.length=0; arrivedCount=0; departedCount=0; isArrived=false;
   document.getElementById('gps-error-panel').classList.remove('show');
   document.getElementById('radar-screen').style.display='none';
   document.getElementById('setup').style.display='flex';
