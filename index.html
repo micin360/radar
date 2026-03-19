@@ -254,8 +254,33 @@
 
 <script>
 /* ═══════════════════════════════════════════════════
-   STATE
+   KALMAN FILTER
 ═══════════════════════════════════════════════════ */
+class KalmanGPS {
+  constructor() {
+    this.Q = 3e-6;   // process noise (pohyb uživatele)
+    this.R = 1e-5;   // measurement noise (GPS šum)
+    this.lat = null; this.lon = null;
+    this.P = 1;      // error covariance
+  }
+  filter(lat, lon, accuracy) {
+    // Dynamicky přizpůsob R podle GPS accuracy
+    this.R = Math.max(1e-6, (accuracy || 10) * 1e-7);
+    if (this.lat === null) { this.lat = lat; this.lon = lon; this.P = 1; return {lat, lon}; }
+    // Predict
+    this.P += this.Q;
+    // Update (Kalman gain)
+    const K = this.P / (this.P + this.R);
+    this.lat += K * (lat - this.lat);
+    this.lon += K * (lon - this.lon);
+    this.P   *= (1 - K);
+    return { lat: this.lat, lon: this.lon };
+  }
+  reset() { this.lat = null; this.lon = null; this.P = 1; }
+}
+const kalman = new KalmanGPS();
+
+
 let TLat, TLon, tClose, tMid;
 let curLat, curLon;
 let heading = 0;       // degrees from North, phone compass
@@ -319,9 +344,10 @@ function initGPS() {
   }, 8000);
   watchId = navigator.geolocation.watchPosition(
     p => {
-      if (manualMode) return; // manual override active
+      if (manualMode) return;
       clearTimeout(gpsErrTimer);
-      curLat = p.coords.latitude; curLon = p.coords.longitude;
+      const filtered = kalman.filter(p.coords.latitude, p.coords.longitude, p.coords.accuracy);
+      curLat = filtered.lat; curLon = filtered.lon;
       gpsOk = true; setGpsSt('OK');
     },
     e => {
@@ -663,6 +689,7 @@ function goBack() {
   window.removeEventListener('deviceorientation', onOrient, true);
   curLat=curLon=undefined; smoothHdg=null; heading=0; gpsOk=cmpOk=false; manualMode=false;
   clearTimeout(gpsErrTimer);
+  kalman.reset();
   document.getElementById('gps-error-panel').classList.remove('show');
   document.getElementById('radar-screen').style.display='none';
   document.getElementById('setup').style.display='flex';
