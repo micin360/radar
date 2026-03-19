@@ -217,7 +217,7 @@
 <div id="radar-screen">
   <div id="top-bar">
     <span>GPS:<span class="val" id="gps-st"> ČEKÁM</span></span>
-    <span>KOMPAS:<span class="val" id="cmp-st"> ---</span></span>
+    <span>ACC:<span class="val" id="acc-val"> ---</span></span>
     <span>HDG:<span class="val" id="hdg-val"> ---</span>°</span>
   </div>
 
@@ -330,7 +330,7 @@ function initGPS() {
       setGpsSt(msgs[e.code] || 'CHYBA');
       showGpsErr();
     },
-    { enableHighAccuracy:true, maximumAge:1500, timeout:15000 }
+    { enableHighAccuracy:true, maximumAge:0, timeout:15000 }
   );
 }
 
