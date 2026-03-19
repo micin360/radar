@@ -9,13 +9,13 @@
     * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 
     :root {
-      --green:    #00ff41;
-      --green2:   #00cc33;
-      --green-dim:#004d15;
-      --green-bg: #0a1f0a;
-      --amber:    #ffaa00;
-      --red:      #ff4040;
-      --bg:       #010801;
+      --green:    #ff2020;
+      --green2:   #cc1515;
+      --green-dim:#4d0808;
+      --green-bg: #1f0a0a;
+      --amber:    #ff7700;
+      --red:      #ff0000;
+      --bg:       #080101;
     }
 
     html, body {
@@ -55,14 +55,14 @@
       color:var(--green2); margin-bottom:5px; display:block;
     }
     input[type="number"], input[type="text"] {
-      width:100%; background:rgba(0,255,65,.04);
+      width:100%; background:rgba(255,32,32,.04);
       border:1px solid var(--green-dim);
       border-bottom:2px solid var(--green2);
       color:var(--green); font-family:'Share Tech Mono',monospace;
       font-size:1rem; padding:10px 12px; outline:none;
       letter-spacing:.08em; appearance:none; -moz-appearance:textfield;
     }
-    input:focus { border-color:var(--green); box-shadow:0 0 12px rgba(0,255,65,.2); }
+    input:focus { border-color:var(--green); box-shadow:0 0 12px rgba(255,32,32,.25); }
 
     .row { display:flex; gap:10px; }
     .row .field-group { flex:1; }
@@ -86,6 +86,46 @@
     }
 
     #err { color:#ff4141; font-size:.72rem; text-align:center; min-height:18px; }
+
+    /* ─── GPS ERROR PANEL ───────────────────────────── */
+    #gps-error-panel {
+      display:none; position:fixed; inset:0; z-index:100;
+      background:rgba(0,0,0,.92); align-items:center; justify-content:center;
+      padding:24px;
+    }
+    #gps-error-panel.show { display:flex; }
+    .gps-err-box {
+      border:1px solid #ff4040; max-width:360px; width:100%;
+      padding:20px; background:#0a0000;
+    }
+    .gps-err-title {
+      font-family:'Orbitron',sans-serif; font-size:.9rem;
+      color:#ff4040; letter-spacing:.15em; margin-bottom:12px;
+    }
+    .gps-err-msg {
+      font-size:.7rem; color:#cc8080; line-height:1.7; margin-bottom:14px;
+    }
+    .gps-err-msg b { color:#ff8080; }
+    .gps-err-box input {
+      width:100%; background:rgba(255,60,60,.06);
+      border:1px solid #660000; border-bottom:2px solid #aa2222;
+      color:#ff8888; font-family:'Share Tech Mono',monospace;
+      font-size:.95rem; padding:9px 11px; outline:none;
+      margin-bottom:8px;
+    }
+    .gps-err-box input:focus { border-color:#ff4040; }
+    .gps-err-label { font-size:.6rem; color:#661111; letter-spacing:.1em; margin-bottom:4px; display:block; }
+    .btn-row { display:flex; gap:8px; margin-top:6px; }
+    .gps-err-box button {
+      flex:1; background:transparent; border:1px solid;
+      font-family:'Share Tech Mono',monospace;
+      font-size:.68rem; letter-spacing:.1em;
+      padding:10px 6px; cursor:pointer; transition:all .15s;
+    }
+    .btn-manual { border-color:#aa2222; color:#cc4444; }
+    .btn-manual:active { background:rgba(255,60,60,.15); }
+    .btn-ignore { border-color:#224422; color:#336633; }
+    .btn-ignore:active { background:rgba(0,255,65,.08); }
 
     /* ─── RADAR SCREEN ─────────────────────────────────────────── */
     #radar-screen {
@@ -143,8 +183,7 @@
 <!-- ══════════════ SETUP ══════════════ -->
 <div id="setup">
   <div class="logo-wrap">
-    <div class="logo">RADAR</div>
-    <div class="logo-sub">GPS DIRECTION TRACKER v1.0</div>
+    <img src="weddingthings.png" alt="WEDDING THINGS" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:2px;">
   </div>
 
   <div class="divider"></div>
@@ -191,6 +230,26 @@
     <div id="dir-val">Čekám na polohu…</div>
   </div>
   <button id="back-btn" onclick="goBack()">← ZPĚT NA NASTAVENÍ</button>
+</div>
+
+<!-- ══════════════ GPS ERROR PANEL ══════════════ -->
+<div id="gps-error-panel">
+  <div class="gps-err-box">
+    <div class="gps-err-title">⚠ GPS NEDOSTUPNÉ</div>
+    <div class="gps-err-msg">
+      Geolokace nefunguje na <b>file://</b> protokolu.<br><br>
+      Pro ostré použití nahraj na <b>GitHub Pages</b> (HTTPS).<br><br>
+      Pro testování zadej svou polohu ručně:
+    </div>
+    <label class="gps-err-label">▸ TVOJE ŠÍŘKA — LATITUDE</label>
+    <input type="number" id="man-lat" placeholder="49.8175" step="any">
+    <label class="gps-err-label">▸ TVOJE DÉLKA — LONGITUDE</label>
+    <input type="number" id="man-lon" placeholder="18.2871" step="any">
+    <div class="btn-row">
+      <button class="btn-manual" onclick="useManualPos()">◉ POUŽÍT MANUÁLNÍ POLOHU</button>
+      <button class="btn-ignore" onclick="closeGpsErr()">POKRAČOVAT BEZ GPS</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -248,14 +307,52 @@ function startTracker() {
 /* ═══════════════════════════════════════════════════
    GPS
 ═══════════════════════════════════════════════════ */
+let gpsErrTimer = null;
+let manualMode = false;
+
 function initGPS() {
-  if (!navigator.geolocation) { setGpsSt('CHYBA'); return; }
+  if (!navigator.geolocation) { setGpsSt('CHYBA'); showGpsErr(); return; }
   setGpsSt('HLEDÁM…');
+  // If no fix in 8s, show the error/fallback panel
+  gpsErrTimer = setTimeout(() => {
+    if (!gpsOk) showGpsErr();
+  }, 8000);
   watchId = navigator.geolocation.watchPosition(
-    p => { curLat = p.coords.latitude; curLon = p.coords.longitude; gpsOk = true; setGpsSt('OK'); },
-    () => setGpsSt('CHYBA'),
+    p => {
+      if (manualMode) return; // manual override active
+      clearTimeout(gpsErrTimer);
+      curLat = p.coords.latitude; curLon = p.coords.longitude;
+      gpsOk = true; setGpsSt('OK');
+    },
+    e => {
+      clearTimeout(gpsErrTimer);
+      const msgs = {1:'ODMÍTNUTO', 2:'NEDOSTUPNÉ', 3:'TIMEOUT'};
+      setGpsSt(msgs[e.code] || 'CHYBA');
+      showGpsErr();
+    },
     { enableHighAccuracy:true, maximumAge:1500, timeout:15000 }
   );
+}
+
+function showGpsErr() {
+  document.getElementById('gps-error-panel').classList.add('show');
+}
+
+function closeGpsErr() {
+  document.getElementById('gps-error-panel').classList.remove('show');
+}
+
+function useManualPos() {
+  const lat = parseFloat(document.getElementById('man-lat').value);
+  const lon = parseFloat(document.getElementById('man-lon').value);
+  if (isNaN(lat) || isNaN(lon)) {
+    alert('Zadej platné souřadnice!'); return;
+  }
+  manualMode = true;
+  curLat = lat; curLon = lon;
+  gpsOk = true;
+  setGpsSt('MANUÁLNÍ');
+  closeGpsErr();
 }
 
 /* ═══════════════════════════════════════════════════
@@ -343,7 +440,7 @@ function renderLoop() {
    DRAW
 ═══════════════════════════════════════════════════ */
 const DIRS = ['S','SV','V','JV','J','JZ','Z','SZ'];
-const RING_COLORS = ['','#00ff41','#ffaa00','#ff5020']; // 1=close,2=mid,3=far
+const RING_COLORS = ['','#ff2020','#ff7700','#ff0000']; // 1=close,2=mid,3=far
 
 function drawEmpty() { drawRadar(null, null); }
 
@@ -370,7 +467,7 @@ function drawRadar(dist, relBear) {
 
   // ── Background subtle glow center
   const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,maxR);
-  bg.addColorStop(0,'rgba(0,50,10,.18)');
+  bg.addColorStop(0,'rgba(50,5,5,.18)');
   bg.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(cx,cy,maxR,0,Math.PI*2); ctx.fill();
 
@@ -405,9 +502,9 @@ function drawRadar(dist, relBear) {
         ctx.lineWidth = 1.8;
         ctx.stroke();
       } else {
-        ctx.fillStyle = 'rgba(0,30,5,0.45)';
+        ctx.fillStyle = 'rgba(30,0,0,0.45)';
         ctx.fill();
-        ctx.strokeStyle = '#0b220b';
+        ctx.strokeStyle = '#220b0b';
         ctx.lineWidth = 0.5;
         ctx.stroke();
       }
@@ -422,7 +519,7 @@ function drawRadar(dist, relBear) {
     ctx.beginPath();
     ctx.moveTo(cx + r0*Math.cos(angle), cy + r0*Math.sin(angle));
     ctx.lineTo(cx + r3*Math.cos(angle), cy + r3*Math.sin(angle));
-    ctx.strokeStyle='#0e280e'; ctx.lineWidth=0.7; ctx.stroke();
+    ctx.strokeStyle='#280e0e'; ctx.lineWidth=0.7; ctx.stroke();
   }
   ctx.restore();
 
@@ -430,7 +527,7 @@ function drawRadar(dist, relBear) {
   ctx.save();
   [r1,r2,r3].forEach(r => {
     ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-    ctx.strokeStyle='#0e280e'; ctx.lineWidth=0.8; ctx.stroke();
+    ctx.strokeStyle='#280e0e'; ctx.lineWidth=0.8; ctx.stroke();
   });
   ctx.restore();
 
@@ -446,8 +543,8 @@ function drawRadar(dist, relBear) {
   ctx.arc(cx,cy,r3, sa - 0.7, sa);
   ctx.closePath();
   const sweep = ctx.createRadialGradient(cx,cy,0,cx,cy,r3);
-  sweep.addColorStop(0,'rgba(0,255,65,0)');
-  sweep.addColorStop(1,'rgba(0,255,65,0.07)');
+  sweep.addColorStop(0,'rgba(255,32,32,0)');
+  sweep.addColorStop(1,'rgba(255,32,32,0.07)');
   ctx.fillStyle = sweep;
   ctx.fill();
 
@@ -455,7 +552,7 @@ function drawRadar(dist, relBear) {
   ctx.beginPath();
   ctx.moveTo(cx,cy);
   ctx.lineTo(cx + r3*Math.cos(sa), cy + r3*Math.sin(sa));
-  ctx.strokeStyle='rgba(0,255,65,0.55)';
+  ctx.strokeStyle='rgba(255,32,32,0.6)';
   ctx.lineWidth=1.5; ctx.stroke();
   ctx.restore();
 
@@ -465,17 +562,17 @@ function drawRadar(dist, relBear) {
   ctx.beginPath(); ctx.arc(cx,cy,r0,0,Math.PI*2);
   if (isCtr) {
     const p = 0.6+0.4*Math.sin(pulsePhase*1.5);
-    ctx.fillStyle = `rgba(0,255,65,${p})`;
-    ctx.shadowColor='#00ff41'; ctx.shadowBlur=30*p;
+    ctx.fillStyle = `rgba(255,32,32,${p})`;
+    ctx.shadowColor='#ff2020'; ctx.shadowBlur=30*p;
   } else {
-    ctx.fillStyle='rgba(0,60,15,0.8)';
+    ctx.fillStyle='rgba(60,0,0,0.8)';
   }
   ctx.fill(); ctx.shadowBlur=0;
-  ctx.strokeStyle = isCtr ? '#00ff41' : '#006614';
+  ctx.strokeStyle = isCtr ? '#ff2020' : '#660000';
   ctx.lineWidth = isCtr ? 2 : 0.8;
   ctx.stroke();
 
-  ctx.fillStyle = isCtr ? '#000' : '#006614';
+  ctx.fillStyle = isCtr ? '#000' : '#660000';
   ctx.textAlign='center'; ctx.textBaseline='middle';
   const fs = r0*0.42;
   ctx.font = `900 ${fs}px 'Orbitron',sans-serif`;
@@ -492,8 +589,8 @@ function drawRadar(dist, relBear) {
   DIRS.forEach((d,i) => {
     const angle = (i*45 - 90)*Math.PI/180;
     const isActDir = (i === activeSec);
-    ctx.fillStyle = isActDir ? '#00ff41' : '#1a5a1a';
-    if (isActDir) { ctx.shadowColor='#00ff41'; ctx.shadowBlur=8; }
+    ctx.fillStyle = isActDir ? '#ff2020' : '#5a1a1a';
+    if (isActDir) { ctx.shadowColor='#ff2020'; ctx.shadowBlur=8; }
     else ctx.shadowBlur=0;
     ctx.fillText(d, cx+lblR*Math.cos(angle), cy+lblR*Math.sin(angle));
   });
@@ -506,8 +603,8 @@ function drawRadar(dist, relBear) {
 function drawLegend(W, H) {
   const items = [
     {col:'#00ff41',lbl:'BLÍZKO'},
-    {col:'#ffaa00',lbl:'STŘEDNĚ'},
-    {col:'#ff5020',lbl:'DALEKO'},
+    {col:'#ff7700',lbl:'STŘEDNĚ'},
+    {col:'#ff0000',lbl:'DALEKO'},
   ];
   ctx.textAlign='left'; ctx.textBaseline='middle';
   ctx.font = `${W*0.025}px 'Share Tech Mono',monospace`;
@@ -515,7 +612,7 @@ function drawLegend(W, H) {
     const x=8, y=H*0.93+i*(W*0.032+2)-(items.length-1)*(W*0.032+2)/2;
     ctx.fillStyle=it.col;
     ctx.beginPath(); ctx.arc(x+5, y, 4,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(0,180,50,.6)';
+    ctx.fillStyle='rgba(200,40,40,.6)';
     ctx.fillText(it.lbl, x+14, y);
   });
 }
@@ -544,7 +641,7 @@ function updateInfo(dist, bear) {
     di.textContent='Cíl dosažen!';
   } else {
     dv.classList.remove('blink');
-    dv.style.color = dist<tClose ? 'var(--green)' : dist<tMid ? 'var(--amber)' : 'var(--red)';
+    dv.style.color = dist<tClose ? '#ff2020' : dist<tMid ? 'var(--amber)' : '#ff0000';
     dv.textContent = dist<1000 ? Math.round(dist)+' m' : (dist/1000).toFixed(2)+' km';
     di.textContent  = `Absolutní směr: ${Math.round(bear)}° ${dirLbl}  |  Komp: ${Math.round(heading)}°`;
   }
@@ -564,7 +661,9 @@ function goBack() {
   if (watchId) navigator.geolocation.clearWatch(watchId);
   window.removeEventListener('deviceorientationabsolute', onOrient, true);
   window.removeEventListener('deviceorientation', onOrient, true);
-  curLat=curLon=undefined; smoothHdg=null; heading=0; gpsOk=cmpOk=false;
+  curLat=curLon=undefined; smoothHdg=null; heading=0; gpsOk=cmpOk=false; manualMode=false;
+  clearTimeout(gpsErrTimer);
+  document.getElementById('gps-error-panel').classList.remove('show');
   document.getElementById('radar-screen').style.display='none';
   document.getElementById('setup').style.display='flex';
 }
