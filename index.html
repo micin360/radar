@@ -765,23 +765,26 @@ function initGPS() {
   }, 8000);
   watchId = navigator.geolocation.watchPosition(
     p => {
+      try {
       if (manualMode) return;
       clearTimeout(gpsErrTimer);
-      // EKF GPS update — vážený accuracy
       EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
       MULTI_EKF.syncInit(p.coords.latitude, p.coords.longitude);
       MULTI_EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
       BARO.updateFromGPS(p.coords.altitude);
-      // Výšku cíle nastavujeme pouze pokud uživatel stojí na cíli —
-      // z GPS souřadnic vzdáleného cíle výšku neznáme, necháme null → fallback 2D
       if (p.coords.speed != null && p.coords.heading != null) {
         EKF.updateGPSVelocity(p.coords.speed, p.coords.heading);
       }
       const pos = EKF.pos();
+      if (!pos) return;
       curLat = pos.lat; curLon = pos.lon;
       gpsOk = true;
       const st = EKF.lastRejected ? `OUTL(${EKF.rejectedCount||0})` : SENS.isStill ? 'ZUPT' : 'OK';
       setGpsSt(st);
+      } catch(err) {
+        console.error('GPS callback error:', err);
+        setGpsSt('ERR');
+      }
     },
     e => {
       clearTimeout(gpsErrTimer);
