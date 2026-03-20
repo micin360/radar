@@ -1,1384 +1,583 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>RADAR TRACKER</title>
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-
-    :root {
-      --green:    #ff2020;
-      --green2:   #cc1515;
-      --green-dim:#4d0808;
-      --green-bg: #1f0a0a;
-      --amber:    #ff7700;
-      --red:      #ff0000;
-      --bg:       #080101;
-    }
-
-    html, body {
-      height:100%; overflow:hidden;
-      background:var(--bg);
-      color:var(--green);
-      font-family:'Share Tech Mono', monospace;
-    }
-
-    /* ─── SETUP SCREEN ─────────────────────────────────────────── */
-    #setup {
-      display:flex; flex-direction:column; align-items:center;
-      justify-content:center; gap:18px;
-      height:100%; padding:30px 24px;
-    }
-
-    .logo-wrap { text-align:center; }
-    .logo {
-      font-family:'Orbitron',sans-serif;
-      font-size:clamp(1.8rem,8vw,2.8rem);
-      font-weight:900; letter-spacing:.35em;
-      text-shadow:0 0 30px var(--green), 0 0 60px rgba(0,255,65,.3);
-    }
-    .logo-sub {
-      font-size:.65rem; letter-spacing:.25em;
-      color:var(--green-dim); margin-top:4px;
-    }
-
-    .divider {
-      width:100%; max-width:360px; height:1px;
-      background:linear-gradient(90deg,transparent,var(--green-dim),transparent);
-    }
-
-    .field-group { width:100%; max-width:360px; }
-    .field-label {
-      font-size:.62rem; letter-spacing:.12em;
-      color:var(--green2); margin-bottom:5px; display:block;
-    }
-    input[type="number"], input[type="text"] {
-      width:100%; background:rgba(255,32,32,.04);
-      border:1px solid var(--green-dim);
-      border-bottom:2px solid var(--green2);
-      color:var(--green); font-family:'Share Tech Mono',monospace;
-      font-size:1rem; padding:10px 12px; outline:none;
-      letter-spacing:.08em; appearance:none; -moz-appearance:textfield;
-    }
-    input:focus { border-color:var(--green); box-shadow:0 0 12px rgba(255,32,32,.25); }
-
-    .row { display:flex; gap:10px; }
-    .row .field-group { flex:1; }
-
-    .start-btn {
-      width:100%; max-width:360px;
-      background:transparent; border:2px solid var(--green);
-      color:var(--green); font-family:'Orbitron',sans-serif;
-      font-size:.85rem; font-weight:700; letter-spacing:.2em;
-      padding:14px; cursor:pointer; text-transform:uppercase;
-      transition:all .15s;
-    }
-    .start-btn:active {
-      background:rgba(0,255,65,.12);
-      box-shadow:0 0 25px rgba(0,255,65,.5);
-    }
-
-    .hint {
-      font-size:.65rem; color:var(--green-dim);
-      text-align:center; max-width:320px; line-height:1.6;
-    }
-
-    #err { color:#ff4141; font-size:.72rem; text-align:center; min-height:18px; }
-
-    /* ─── GPS ERROR PANEL ───────────────────────────── */
-    #gps-error-panel {
-      display:none; position:fixed; inset:0; z-index:100;
-      background:rgba(0,0,0,.92); align-items:center; justify-content:center;
-      padding:24px;
-    }
-    #gps-error-panel.show { display:flex; }
-    .gps-err-box {
-      border:1px solid #ff4040; max-width:360px; width:100%;
-      padding:20px; background:#0a0000;
-    }
-    .gps-err-title {
-      font-family:'Orbitron',sans-serif; font-size:.9rem;
-      color:#ff4040; letter-spacing:.15em; margin-bottom:12px;
-    }
-    .gps-err-msg {
-      font-size:.7rem; color:#cc8080; line-height:1.7; margin-bottom:14px;
-    }
-    .gps-err-msg b { color:#ff8080; }
-    .gps-err-box input {
-      width:100%; background:rgba(255,60,60,.06);
-      border:1px solid #660000; border-bottom:2px solid #aa2222;
-      color:#ff8888; font-family:'Share Tech Mono',monospace;
-      font-size:.95rem; padding:9px 11px; outline:none;
-      margin-bottom:8px;
-    }
-    .gps-err-box input:focus { border-color:#ff4040; }
-    .gps-err-label { font-size:.6rem; color:#661111; letter-spacing:.1em; margin-bottom:4px; display:block; }
-    .btn-row { display:flex; gap:8px; margin-top:6px; }
-    .gps-err-box button {
-      flex:1; background:transparent; border:1px solid;
-      font-family:'Share Tech Mono',monospace;
-      font-size:.68rem; letter-spacing:.1em;
-      padding:10px 6px; cursor:pointer; transition:all .15s;
-    }
-    .btn-manual { border-color:#aa2222; color:#cc4444; }
-    .btn-manual:active { background:rgba(255,60,60,.15); }
-    .btn-ignore { border-color:#224422; color:#336633; }
-    .btn-ignore:active { background:rgba(0,255,65,.08); }
-
-    /* ─── RADAR SCREEN ─────────────────────────────────────────── */
-    #radar-screen {
-      display:none; flex-direction:column;
-      align-items:center; height:100%;
-      padding:8px 10px 6px;
-    }
-
-    #top-bar {
-      display:flex; justify-content:space-between; align-items:center;
-      width:100%; max-width:420px;
-      font-size:.68rem; letter-spacing:.08em;
-      color:var(--green-dim); padding:2px 6px; margin-bottom:4px;
-    }
-    #top-bar .val { color:var(--green); }
-
-    #canvas-wrap {
-      position:relative; flex:1;
-      display:flex; align-items:center; justify-content:center;
-      width:100%; max-width:420px;
-    }
-
-    canvas { display:block; }
-
-    #info {
-      width:100%; max-width:420px;
-      text-align:center; padding:6px 0 4px;
-    }
-    #dist-val {
-      font-family:'Orbitron',sans-serif;
-      font-size:clamp(1.4rem,6vw,2rem); font-weight:700;
-      text-shadow:0 0 15px currentColor;
-      letter-spacing:.05em;
-    }
-    #dir-val {
-      font-size:.72rem; color:var(--green2);
-      letter-spacing:.1em; margin-top:3px;
-    }
-
-    #back-btn {
-      background:transparent; border:1px solid var(--green-dim);
-      color:var(--green-dim); font-family:'Share Tech Mono',monospace;
-      font-size:.65rem; letter-spacing:.12em;
-      padding:6px 18px; cursor:pointer; margin-top:4px;
-      transition:all .15s;
-    }
-    #back-btn:active { color:var(--green); border-color:var(--green); }
-
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    .blink { animation:pulse .8s infinite; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>RADAR TRACKER</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--red:#ff2020;--red2:#cc1515;--red-dim:#4d0808;--amber:#ff7700;--bg:#080101}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--red);font-family:'Share Tech Mono',monospace}
+/* SETUP */
+#setup{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;height:100%;padding:28px 22px}
+.logo-wrap img{width:100%;max-width:360px;display:block;margin:0 auto;border-radius:2px}
+.divider{width:100%;max-width:360px;height:1px;background:linear-gradient(90deg,transparent,var(--red-dim),transparent)}
+.fg{width:100%;max-width:360px}
+.fl{font-size:.6rem;letter-spacing:.12em;color:var(--red2);margin-bottom:4px;display:block}
+input[type=number]{width:100%;background:rgba(255,32,32,.04);border:1px solid var(--red-dim);border-bottom:2px solid var(--red2);color:var(--red);font-family:'Share Tech Mono',monospace;font-size:.95rem;padding:9px 11px;outline:none;appearance:none;-moz-appearance:textfield}
+input:focus{border-color:var(--red);box-shadow:0 0 12px rgba(255,32,32,.2)}
+.row{display:flex;gap:10px}.row .fg{flex:1}
+.sbtn{width:100%;max-width:360px;background:transparent;border:2px solid var(--red);color:var(--red);font-family:'Orbitron',sans-serif;font-size:.82rem;font-weight:700;letter-spacing:.2em;padding:13px;cursor:pointer;transition:all .15s}
+.sbtn:active{background:rgba(255,32,32,.12);box-shadow:0 0 25px rgba(255,32,32,.5)}
+.hint{font-size:.62rem;color:var(--red-dim);text-align:center;max-width:320px;line-height:1.6}
+#serr{color:#ff6060;font-size:.7rem;text-align:center;min-height:16px}
+/* RADAR */
+#radar{display:none;flex-direction:column;align-items:center;height:100%;padding:6px 8px 4px}
+#topbar{display:flex;justify-content:space-between;align-items:center;width:100%;max-width:420px;font-size:.65rem;letter-spacing:.07em;color:var(--red-dim);padding:2px 4px;margin-bottom:3px}
+#topbar .v{color:var(--red)}
+#cwrap{position:relative;flex:1;display:flex;align-items:center;justify-content:center;width:100%;max-width:420px}
+canvas{display:block}
+#info{width:100%;max-width:420px;text-align:center;padding:5px 0 3px}
+#dval{font-family:'Orbitron',sans-serif;font-size:clamp(1.3rem,6vw,1.9rem);font-weight:700;letter-spacing:.05em}
+#dirv{font-size:.68rem;color:var(--red2);letter-spacing:.08em;margin-top:2px}
+#bbtn{background:transparent;border:1px solid var(--red-dim);color:var(--red-dim);font-family:'Share Tech Mono',monospace;font-size:.62rem;letter-spacing:.1em;padding:5px 16px;cursor:pointer;margin-top:3px;transition:all .15s}
+#bbtn:active{color:var(--red);border-color:var(--red)}
+/* GPS ERR */
+#gpserr{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.92);align-items:center;justify-content:center;padding:22px}
+#gpserr.show{display:flex}
+.gbox{border:1px solid #f44;max-width:360px;width:100%;padding:18px;background:#0a0000}
+.gbox h3{font-family:'Orbitron',sans-serif;font-size:.85rem;color:#f44;letter-spacing:.12em;margin-bottom:10px}
+.gbox p{font-size:.68rem;color:#c88;line-height:1.7;margin-bottom:12px}
+.gbox p b{color:#f88}
+.gbox label{font-size:.58rem;color:#611;letter-spacing:.1em;margin-bottom:3px;display:block}
+.gbox input{width:100%;background:rgba(255,60,60,.06);border:1px solid #600;border-bottom:2px solid #a22;color:#f88;font-family:'Share Tech Mono',monospace;font-size:.9rem;padding:8px 10px;outline:none;margin-bottom:7px}
+.brow{display:flex;gap:7px;margin-top:4px}
+.gbox button{flex:1;background:transparent;border:1px solid;font-family:'Share Tech Mono',monospace;font-size:.65rem;letter-spacing:.08em;padding:9px 5px;cursor:pointer}
+.bman{border-color:#a22;color:#c44}
+.bskp{border-color:#222;color:#444}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.blink{animation:blink .75s infinite}
+</style>
 </head>
 <body>
 
-<!-- ══════════════ SETUP ══════════════ -->
 <div id="setup">
-  <div class="logo-wrap">
-    <img src="weddingthings.png" alt="WEDDING THINGS" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:2px;">
-  </div>
-
+  <div class="logo-wrap"><img src="weddingthings.png" alt="WEDDING THINGS"></div>
   <div class="divider"></div>
-
-  <div class="field-group">
-    <label class="field-label">▸ CÍLOVÁ ŠÍŘKA — LATITUDE</label>
-    <input type="number" id="tlat" value="48.8015031" step="any">
+  <div class="fg"><label class="fl">▸ CÍLOVÁ ŠÍŘKA — LATITUDE</label><input type="number" id="tlat" value="48.8015031" step="any"></div>
+  <div class="fg"><label class="fl">▸ CÍLOVÁ DÉLKA — LONGITUDE</label><input type="number" id="tlon" value="16.3740106" step="any"></div>
+  <div class="row fg" style="max-width:360px;width:100%">
+    <div class="fg"><label class="fl">▸ BLÍZKO &lt; (m)</label><input type="number" id="tc" value="10" min="1"></div>
+    <div class="fg"><label class="fl">▸ STŘEDNĚ &lt; (m)</label><input type="number" id="tm" value="100" min="1"></div>
   </div>
-  <div class="field-group">
-    <label class="field-label">▸ CÍLOVÁ DÉLKA — LONGITUDE</label>
-    <input type="number" id="tlon" value="16.3740106" step="any">
-  </div>
-
-  <div class="row field-group" style="max-width:360px;width:100%">
-    <div class="field-group">
-      <label class="field-label">▸ BLÍZKO &lt; (m)</label>
-      <input type="number" id="tc" value="10" min="1">
-    </div>
-    <div class="field-group">
-      <label class="field-label">▸ STŘEDNĚ &lt; (m)</label>
-      <input type="number" id="tm" value="100" min="1">
-    </div>
-  </div>
-
-  <button class="start-btn" onclick="startTracker()">◉ SPUSTIT SLEDOVÁNÍ</button>
-  <p id="err"></p>
-  <p class="hint">Aplikace potřebuje přístup k poloze a gyroskopickému senzoru. Povolte, až vás prohlížeč požádá.</p>
+  <button class="sbtn" onclick="startApp()">◉ SPUSTIT SLEDOVÁNÍ</button>
+  <p id="serr"></p>
+  <p class="hint">Vyžaduje HTTPS (GitHub Pages) pro GPS. Povolte přístup k poloze a senzorům.</p>
 </div>
 
-<!-- ══════════════ RADAR ══════════════ -->
-<div id="radar-screen">
-  <div id="top-bar">
-    <span>GPS:<span class="val" id="gps-st"> ČEKÁM</span></span>
-    <span>ACC:<span class="val" id="acc-val"> ---</span></span>
-    <span>HDG:<span class="val" id="hdg-val"> ---</span>°</span>
+<div id="radar">
+  <div id="topbar">
+    <span>GPS:<span class="v" id="gst"> ČEKÁM</span></span>
+    <span>HDG:<span class="v" id="hval"> ---</span>°</span>
+    <span>KROKY:<span class="v" id="sval"> 0</span></span>
   </div>
-
-  <div id="canvas-wrap">
-    <canvas id="cvs"></canvas>
-  </div>
-
-  <div id="info">
-    <div id="dist-val">---</div>
-    <div id="dir-val">Čekám na polohu…</div>
-  </div>
-  <button id="back-btn" onclick="goBack()">← ZPĚT NA NASTAVENÍ</button>
+  <div id="cwrap"><canvas id="cvs"></canvas></div>
+  <div id="info"><div id="dval">---</div><div id="dirv">Čekám na polohu…</div></div>
+  <button id="bbtn" onclick="stopApp()">← ZPĚT</button>
 </div>
 
-<!-- ══════════════ GPS ERROR PANEL ══════════════ -->
-<div id="gps-error-panel">
-  <div class="gps-err-box">
-    <div class="gps-err-title">⚠ GPS NEDOSTUPNÉ</div>
-    <div class="gps-err-msg">
-      Geolokace nefunguje na <b>file://</b> protokolu.<br><br>
-      Pro ostré použití nahraj na <b>GitHub Pages</b> (HTTPS).<br><br>
-      Pro testování zadej svou polohu ručně:
-    </div>
-    <label class="gps-err-label">▸ TVOJE ŠÍŘKA — LATITUDE</label>
-    <input type="number" id="man-lat" placeholder="49.8175" step="any">
-    <label class="gps-err-label">▸ TVOJE DÉLKA — LONGITUDE</label>
-    <input type="number" id="man-lon" placeholder="18.2871" step="any">
-    <div class="btn-row">
-      <button class="btn-manual" onclick="useManualPos()">◉ POUŽÍT MANUÁLNÍ POLOHU</button>
-      <button class="btn-ignore" onclick="closeGpsErr()">POKRAČOVAT BEZ GPS</button>
+<div id="gpserr">
+  <div class="gbox">
+    <h3>⚠ GPS NEDOSTUPNÉ</h3>
+    <p>GPS nefunguje na <b>file://</b>. Nahrajte na <b>GitHub Pages</b> (HTTPS).<br><br>Pro testování zadejte polohu ručně:</p>
+    <label>▸ VAŠE ŠÍŘKA</label><input type="number" id="mlat" placeholder="49.8175" step="any">
+    <label>▸ VAŠE DÉLKA</label><input type="number" id="mlon" placeholder="18.2871" step="any">
+    <div class="brow">
+      <button class="bman" onclick="useManual()">◉ POUŽÍT</button>
+      <button class="bskp" onclick="closeGE()">PŘESKOČIT</button>
     </div>
   </div>
 </div>
 
 <script>
-/* ═══════════════════════════════════════════════════
-   MAGNETICKÁ DEKLINACE (zjednodušený WMM offline)
-   Pro střední Evropu přesnost ~0.5°
-═══════════════════════════════════════════════════ */
-function magDeclination(lat, lon) {
-  // Zjednodušená aproximace WMM-2020 pro Evropu
-  const a0 =  3.0;
-  const a1 =  0.0300 * (lat - 49.0);
-  const a2 = -0.0500 * (lon - 15.0);
-  const a3 =  0.0002 * (lat - 49.0) * (lon - 15.0);
-  return a0 + a1 + a2 + a3; // stupně, kladné = východní
+'use strict';
+
+/* ── MATH ── */
+const MPD = 111320;
+const mpd = lat => 111320*Math.cos(lat*Math.PI/180);
+
+function magDecl(lat,lon){
+  return 3.0+0.03*(lat-49)-0.05*(lon-15)+0.0002*(lat-49)*(lon-15);
 }
 
-/* ═══════════════════════════════════════════════════
-   EKF — Extended Kalman Filter
-   Stav: [lat, lon, vNorth(m/s), vEast(m/s)]
-   Vstupy: GPS poloha+rychlost (vážená), akcelerometr, ZUPT
-═══════════════════════════════════════════════════ */
-const EKF = {
-  x: null, P: null, initialized: false,
-  Qpos: 1e-12, Qvel: 0.05,
-  mPerDegLat: 111320,
-  mPerDegLon(lat) { return 111320 * Math.cos(lat * Math.PI / 180); },
-
-  // Vážený GPS buffer — circular buffer posledních 10 fixů
-  gpsBuf: [],
-  GPS_BUF_SIZE: 10,
-
-  // Přidej GPS fix do bufferu a vrať vážený průměr
-  weightedGPS(lat, lon, accuracy) {
-    EKF.gpsBuf.push({ lat, lon, w: 1 / (accuracy * accuracy) });
-    if (EKF.gpsBuf.length > EKF.GPS_BUF_SIZE) EKF.gpsBuf.shift();
-    let wSum = 0, wLat = 0, wLon = 0;
-    for (const f of EKF.gpsBuf) {
-      wSum += f.w; wLat += f.w * f.lat; wLon += f.w * f.lon;
-    }
-    return { lat: wLat / wSum, lon: wLon / wSum };
-  },
-
-  init(lat, lon) {
-    EKF.x = [lat, lon, 0, 0];
-    EKF.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
-    EKF.initialized = true;
-  },
-
-  predict(aN, aE, dt) {
-    if (!EKF.initialized) return;
-    const [lat, lon, vN, vE] = EKF.x;
-    const mLat = EKF.mPerDegLat, mLon = EKF.mPerDegLon(lat);
-    EKF.x[0] = lat + (vN * dt) / mLat;
-    EKF.x[1] = lon + (vE * dt) / mLon;
-    EKF.x[2] = vN + aN * dt;
-    EKF.x[3] = vE + aE * dt;
-    const F = [1,0,dt/mLat,0, 0,1,0,dt/mLon, 0,0,1,0, 0,0,0,1];
-    EKF.P = EKF.matAdd(
-      EKF.mat4Mul(EKF.mat4Mul(F, EKF.P), EKF.mat4T(F)),
-      [EKF.Qpos,0,0,0, 0,EKF.Qpos,0,0, 0,0,EKF.Qvel,0, 0,0,0,EKF.Qvel]
-    );
-  },
-
-  // GPS poloha — GPS je vždy kotva, EKF jen interpoluje mezi fixy
-  updateGPS(lat, lon, accuracy) {
-    if (!EKF.initialized) { EKF.init(lat, lon); return; }
-
-    const R = Math.max(1e-12, Math.pow((accuracy || 10) / EKF.mPerDegLat, 2));
-    const dLat = lat - EKF.x[0], dLon = lon - EKF.x[1];
-    const S00 = EKF.P[0] + R, S11 = EKF.P[5] + R;
-    const mahal2 = (dLat*dLat)/S00 + (dLon*dLon)/S11;
-
-    // Vzdálenost EKF od GPS v metrech
-    const distDrift = Math.sqrt(
-      (dLat * EKF.mPerDegLat)**2 +
-      (dLon * EKF.mPerDegLon(EKF.x[0]))**2
-    );
-
-    // Pokud EKF zdriftoval více než 30m od GPS → tvrdý reset na GPS
-    // GPS je ground truth, EKF drift je chyba filtru
-    if (distDrift > 30) {
-      EKF.x[0] = lat; EKF.x[1] = lon;
-      EKF.x[2] = 0;   EKF.x[3] = 0; // reset rychlosti
-      // Resetuj P — vysoká nejistota po resetu
-      EKF.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
-      EKF.gpsBuf = []; // vyčisti vážený buffer
-      EKF.lastRejected = false;
-      EKF.rejectedCount = 0;
-      return;
-    }
-
-    // Outlier rejection pouze pro extrémní skoky GPS (>50m při accuracy<20m)
-    // = skutečně špatný fix, ne EKF drift
-    const gpsJump = distDrift > 50 && (accuracy || 10) < 20;
-    if (gpsJump) {
-      EKF.lastRejected = true;
-      EKF.rejectedCount = (EKF.rejectedCount||0)+1;
-      return;
-    }
-    EKF.lastRejected = false;
-
-    // Zapamatuj poslední platný GPS fix pro clamping
-    EKF.lastGPSLat = lat;
-    EKF.lastGPSLon = lon;
-    EKF.lastGPSAccuracy = accuracy || 10;
-    EKF.lastGPSTime = Date.now();
-
-    // Vážený GPS buffer
-    const w = EKF.weightedGPS(lat, lon, accuracy || 10);
-    const wLat = w.lat - EKF.x[0], wLon = w.lon - EKF.x[1];
-
-    // Standardní Kalman update
-    const K0=EKF.P[0]/S00,  K1=EKF.P[4]/S11,
-          K2=EKF.P[8]/S00,  K3=EKF.P[9]/S11,
-          K4=EKF.P[12]/S00, K5=EKF.P[13]/S11;
-    EKF.x[0] += K0*wLat + K1*wLon;
-    EKF.x[1] += (EKF.P[1]/S00)*wLat + (EKF.P[5]/S11)*wLon;
-    EKF.x[2] += K2*wLat + K3*wLon;
-    EKF.x[3] += K4*wLat + K5*wLon;
-    const ik0=1-K0, ik5=1-EKF.P[5]/S11;
-    EKF.P[0]*=ik0; EKF.P[1]*=ik0; EKF.P[4]*=ik5; EKF.P[5]*=ik5;
-    EKF.P[8]*=ik0; EKF.P[9]*=ik5; EKF.P[12]*=ik0; EKF.P[13]*=ik5;
-  },
-
-  // GPS rychlost — nezávislý EKF update pro vN, vE
-  updateGPSVelocity(speed, gpsHeading) {
-    if (!EKF.initialized || speed == null || speed < 0.1) return;
-    // Rozlož rychlost na složky
-    const rad = gpsHeading * Math.PI / 180;
-    const vN_meas = speed * Math.cos(rad);
-    const vE_meas = speed * Math.sin(rad);
-    // Šum měření GPS rychlosti ~0.3 m/s
-    const Rv = 0.09;
-    // Update pro vN (index 2)
-    const S2 = EKF.P[10] + Rv;
-    const K2 = EKF.P[10] / S2;
-    EKF.x[2] += K2 * (vN_meas - EKF.x[2]);
-    EKF.P[10] *= (1 - K2);
-    // Update pro vE (index 3)
-    const S3 = EKF.P[15] + Rv;
-    const K3 = EKF.P[15] / S3;
-    EKF.x[3] += K3 * (vE_meas - EKF.x[3]);
-    EKF.P[15] *= (1 - K3);
-  },
-
-  // ZUPT — vnutit nulovou rychlost
-  zupt() {
-    if (!EKF.initialized) return;
-    const Rz = 1e-4;
-    const K2 = EKF.P[10]/(EKF.P[10]+Rz), K3 = EKF.P[15]/(EKF.P[15]+Rz);
-    EKF.x[2] *= (1-K2); EKF.x[3] *= (1-K3);
-    EKF.P[10] *= (1-K2); EKF.P[15] *= (1-K3);
-  },
-
-  // Tracking posledního GPS fixu pro clamping
-  lastGPSLat: null, lastGPSLon: null,
-  lastGPSAccuracy: 10,
-  lastGPSTime: null,
-
-  // Clamp EKF pozice na GPS accuracy rádius od posledního fixu
-  clampToGPSRadius() {
-    if (!EKF.initialized || EKF.lastGPSLat === null) return;
-    const mLat = EKF.mPerDegLat;
-    const mLon = EKF.mPerDegLon(EKF.x[0]);
-    const dN = (EKF.x[0] - EKF.lastGPSLat) * mLat;
-    const dE = (EKF.x[1] - EKF.lastGPSLon) * mLon;
-    const dist = Math.sqrt(dN*dN + dE*dE);
-    // Povolená zóna = accuracy × 1.5 + čas bez fixu × 0.5 m/s (chůze)
-    const timeSinceFix = (Date.now() - EKF.lastGPSTime) / 1000;
-    const maxDrift = EKF.lastGPSAccuracy * 1.5 + timeSinceFix * 0.7;
-    if (dist > maxDrift) {
-      // Ořízni na hranici povolené zóny
-      const scale = maxDrift / dist;
-      EKF.x[0] = EKF.lastGPSLat + (dN * scale) / mLat;
-      EKF.x[1] = EKF.lastGPSLon + (dE * scale) / mLon;
-    }
-  },
-  reset() {
-    EKF.x=null; EKF.P=null; EKF.initialized=false; EKF.gpsBuf=[];
-    EKF.lastGPSLat=null; EKF.lastGPSLon=null;
-    EKF.lastGPSTime=null; EKF.lastGPSAccuracy=10;
-  },
-  mat4Mul(A,B){const C=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)C[i*4+j]+=A[i*4+k]*B[k*4+j];return C;},
-  mat4T(A){const T=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)T[j*4+i]=A[i*4+j];return T;},
-  matAdd(A,B){return A.map((v,i)=>v+B[i]);}
-};
-
-/* ═══════════════════════════════════════════════════
-   SENZORY — akcelerometr + gyroskop + ZUPT
-   + tilt kompenzace + adaptivní délka kroku
-═══════════════════════════════════════════════════ */
-const SENS = {
-  lastT: null,
-  accBuf: [], ZUPT_WIN: 15, ZUPT_THR: 0.3,
-  isStill: false,
-  stepCount: 0, stepState: 'low',
-  stepHigh: 11.8, stepLow: 9.5,
-  // Tilt (pitch/roll) z gyroskopu — integrovaný
-  pitch: 0, roll: 0,
-  // Adaptivní délka kroku
-  recentMags: [], STRIDE_WIN: 5,
-
-  onMotion(e) {
-    const now = Date.now();
-    if (SENS.lastT === null) { SENS.lastT = now; return; }
-    const dt = Math.min((now - SENS.lastT) / 1000, 0.05);
-    SENS.lastT = now;
-
-    const ag = e.accelerationIncludingGravity;
-    const a  = e.acceleration;
-    const rr = e.rotationRate;
-    if (!ag || ag.x == null) return;
-
-    // --- Tilt kompenzace — komplementární filtr ---
-    // Akcelerometr → absolutní pitch/roll z gravitačního vektoru
-    const accNorm = Math.sqrt(ag.x**2 + ag.y**2 + ag.z**2);
-    if (accNorm > 0.5) { // ignoruj pokud příliš malý signál
-      const pitchAcc = Math.atan2(-ag.x, Math.sqrt(ag.y**2 + ag.z**2)) * 180 / Math.PI;
-      const rollAcc  = Math.atan2( ag.y, ag.z) * 180 / Math.PI;
-
-      if (rr && rr.beta != null) {
-        // Gyro predikce pitch/roll
-        const pitchGyro = SENS.pitch + rr.beta  * dt;
-        const rollGyro  = SENS.roll  + rr.gamma * dt;
-        // Komplementární fúze — 98% gyro + 2% akcelerometr
-        SENS.pitch = 0.98 * pitchGyro + 0.02 * pitchAcc;
-        SENS.roll  = 0.98 * rollGyro  + 0.02 * rollAcc;
-      } else {
-        // Bez gyra — jen akcelerometr
-        SENS.pitch = pitchAcc;
-        SENS.roll  = rollAcc;
-      }
-    }
-
-    const mag = Math.sqrt(ag.x**2 + ag.y**2 + ag.z**2);
-
-    // ZUPT detekce — vždy aktualizuj buffer
-    SENS.accBuf.push(mag);
-    if (SENS.accBuf.length > SENS.ZUPT_WIN) SENS.accBuf.shift();
-
-    if (SENS.accBuf.length >= SENS.ZUPT_WIN) {
-      const mean = SENS.accBuf.reduce((s,v)=>s+v,0)/SENS.accBuf.length;
-      const std  = Math.sqrt(SENS.accBuf.reduce((s,v)=>s+(v-mean)**2,0)/SENS.accBuf.length);
-      // Rozptyl magnitudy kolem gravitace — stojíš = std blízko 0
-      // Navíc zkontroluj že mean je blízko 9.81 (= gravitace, ne pohyb)
-      const nearGravity = Math.abs(mean - 9.81) < 0.5;
-      SENS.isStill = std < SENS.ZUPT_THR && nearGravity;
-    } else {
-      SENS.isStill = false; // buffer se plní — nevíme jestli stojíme
-    }
-
-    // AHRS gyro fúze — VŽDY, i při ZUPT (jinak heading zaostane)
-    AHRS.onMotion(e);
-
-    if (SENS.isStill) {
-      EKF.zupt();
-      AHRS.zuptCorrect();
-      // Nepředáváme akceleraci do EKF — stojíme
-      return;
-    }
-
-    // Pohyb — POUZE přes detekci kroků + heading vektor
-    // Akcelerometr raw NEVKLÁDÁME do EKF (kumuluje drift)
-    // EKF predict bez pohybové složky — pouze šum procesu
-    EKF.predict(0, 0, dt);
-    MULTI_EKF.predict(0, 0, dt);
-
-    // --- Vertikální složka akcelerace pro detekci kroků ---
-    // Použij pitch/roll z tilt kompenzace k izolaci vertikální osy
-    // Vertikální osa = ag promítnutá na vektor gravitace
-    // → invariantní vůči rotaci telefonu v ruce
-    const pitchR = SENS.pitch * Math.PI / 180;
-    const rollR  = SENS.roll  * Math.PI / 180;
-    // Jednotkový vektor gravitace v souřadnicích telefonu
-    const gx = -Math.sin(pitchR);
-    const gy =  Math.sin(rollR) * Math.cos(pitchR);
-    const gz =  Math.cos(rollR) * Math.cos(pitchR);
-    // Vertikální složka = projekce ag na vektor gravitace
-    const vertAcc = ag.x*gx + ag.y*gy + ag.z*gz;
-
-    // Klouzavý průměr vertikální složky pro vyhlazení
-    SENS.recentMags.push(vertAcc);
-    if (SENS.recentMags.length > SENS.STRIDE_WIN) SENS.recentMags.shift();
-    const avgVert = SENS.recentMags.reduce((s,v)=>s+v,0)/SENS.recentMags.length;
-
-    // Adaptivní délka kroku z amplitudy vertikální akcelerace
-    const vertAmplitude = Math.max(...SENS.recentMags) - Math.min(...SENS.recentMags);
-    const strideLen = Math.max(0.3, Math.min(0.95,
-      0.35 + 0.18 * Math.sqrt(Math.max(0, vertAmplitude - 0.5))
-    ));
-
-    // Detekce kroků z vertikální složky — rotace telefonu ji nemění
-    // Peak nad 10.5 m/s² = vrchol kroku, valley pod 8.5 m/s² = dno kroku
-    if (SENS.stepState==='low' && vertAcc > 10.5) {
-      SENS.stepState = 'high';
-    } else if (SENS.stepState==='high' && vertAcc < 8.5) {
-      SENS.stepState = 'low';
-      SENS.stepCount++;
-      // Injektuj krok jako polohovací vektor do EKF
-      // heading z AHRS = směr pohybu
-      if (EKF.initialized) {
-        const rad = AHRS.heading * Math.PI / 180;
-        const stepN = strideLen * Math.cos(rad);
-        const stepE = strideLen * Math.sin(rad);
-        const mLat  = EKF.mPerDegLat;
-        const mLon  = EKF.mPerDegLon(EKF.x[0]);
-        // Přidej krok jako přímý posun — GPS fix ho koriguje
-        EKF.x[0] += stepN / mLat;
-        EKF.x[1] += stepE / mLon;
-        // Nastav rychlost podle kroku
-        EKF.x[2] = stepN / Math.max(dt * 20, 0.5);
-        EKF.x[3] = stepE / Math.max(dt * 20, 0.5);
-        // Clamp na GPS accuracy rádius — krok nesmí překročit povolenou zónu
-        EKF.clampToGPSRadius();
-      }
-    }
-  },
-
-  reset() {
-    SENS.lastT = null; SENS.accBuf = []; SENS.recentMags = [];
-    SENS.isStill = false; SENS.stepCount = 0; SENS.stepState = 'low';
-    SENS.pitch = 0; SENS.roll = 0;
-  }
-};
-
-function initSensors() {
-  if (!window.DeviceMotionEvent) return;
-  const bind = () => {
-    window.addEventListener('devicemotion', e => SENS.onMotion(e));
-  };
-  if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    DeviceMotionEvent.requestPermission()
-      .then(s => { if (s==='granted') bind(); }).catch(()=>{});
-  } else { bind(); }
-}
-
-
-
-
-/* ═══════════════════════════════════════════════════
-   AHRS — komplementární filtr heading
-   α * gyroskop + (1-α) * magnetometr
-═══════════════════════════════════════════════════ */
-const AHRS = {
-  heading: 0,
-  initialized: false,
-  lastT: null,
-  gyroZ: 0,
-  magHeading: 0,
-  magBuf: [], MAG_BUF: 9,
-
-  // Mediánový filtr — odstraní špičky
-  medianMag(h) {
-    AHRS.magBuf.push(h);
-    if (AHRS.magBuf.length > AHRS.MAG_BUF) AHRS.magBuf.shift();
-    if (AHRS.magBuf.length < 3) return h;
-    // Seřaď s ošetřením přechodu 0/360
-    const base = AHRS.magBuf[0];
-    const normalized = AHRS.magBuf.map(v => {
-      let d = v - base;
-      if (d >  180) d -= 360;
-      if (d < -180) d += 360;
-      return d;
-    }).sort((a,b) => a-b);
-    const median = normalized[Math.floor(normalized.length/2)];
-    return ((base + median) + 360) % 360;
-  },
-
-  // Volá se z deviceorientation (magnetometr)
-  onMag(magHdg) {
-    const decl = (TLat && TLon) ? magDeclination(TLat, TLon) : 4.5;
-    const corrected = ((magHdg + decl) + 360) % 360;
-    // Mediánový filtr před předáním do AHRS
-    const filtered = AHRS.medianMag(corrected);
-    if (!AHRS.initialized) {
-      AHRS.heading = filtered;
-      AHRS.initialized = true;
-      return;
-    }
-    AHRS.magHeading = filtered;
-  },
-
-  // Volá se z devicemotion (gyroskop rotationRate)
-  onMotion(e) {
-    const now = Date.now();
-    if (AHRS.lastT === null) { AHRS.lastT = now; return; }
-    const dt = Math.min((now - AHRS.lastT) / 1000, 0.05);
-    AHRS.lastT = now;
-    if (!AHRS.initialized) return;
-
-    const rr = e.rotationRate;
-    // Pouze yaw (alpha) — ignoruj beta/gamma (tilt) které dělají problémy
-    let gz = 0;
-    if (rr && rr.alpha != null) gz = rr.alpha;
-
-    // Dynamická alpha
-    const absGz = Math.abs(gz);
-    const dynAlpha = absGz > 30 ? 0.99 : absGz > 5 ? 0.97 : 0.90;
-
-    let gyroPred = AHRS.heading + gz * dt;
-    gyroPred = ((gyroPred % 360) + 360) % 360;
-
-    const mag = AHRS.magHeading;
-    let diff = mag - gyroPred;
-    if (diff >  180) diff -= 360;
-    if (diff < -180) diff += 360;
-
-    let newHeading = ((gyroPred + (1 - dynAlpha) * diff) + 360) % 360;
-
-    // Rate limit 45°/s
-    let hdgDiff = newHeading - AHRS.heading;
-    if (hdgDiff >  180) hdgDiff -= 360;
-    if (hdgDiff < -180) hdgDiff += 360;
-    const maxChange = 45 * dt;
-    if (Math.abs(hdgDiff) > maxChange) hdgDiff = Math.sign(hdgDiff) * maxChange;
-
-    AHRS.heading = ((AHRS.heading + hdgDiff) + 360) % 360;
-    AHRS.gyroZ = gz;
-  },
-
-  // ZUPT heading korekce
-  zuptCorrect() {
-    if (!AHRS.initialized) return;
-    const mag = AHRS.magHeading;
-    let diff = mag - AHRS.heading;
-    if (diff >  180) diff -= 360;
-    if (diff < -180) diff += 360;
-    AHRS.heading = ((AHRS.heading + 0.15 * diff) + 360) % 360;
-  },
-
-  reset() {
-    AHRS.heading = 0; AHRS.initialized = false;
-    AHRS.lastT = null; AHRS.gyroZ = 0; AHRS.magHeading = 0;
-    AHRS.magBuf = [];
-  }
-};
-let curLat, curLon;
-let smoothHdg = null; // pro raw magnetometr (fallback)
-let gpsOk = false, cmpOk = false;
-
-let raf, watchId;
-let scanAngle = 0;
-let pulsePhase = 0;
-
-// Klouzavý průměr vzdálenosti
-const DIST_BUF_SIZE = 5;
-const distBuffer = [];
-let arrivedCount  = 0;   // po sobě jdoucích měření "blízko"
-let departedCount = 0;   // po sobě jdoucích měření "daleko"
-const ARRIVE_CONFIRM = 4; // kolik měření musí potvrdit příjezd
-const DEPART_CONFIRM = 4; // kolik měření musí potvrdit odjezd
-let isArrived = false;
-
-function smoothedDist(rawDist) {
-  distBuffer.push(rawDist);
-  if (distBuffer.length > DIST_BUF_SIZE) distBuffer.shift();
-  return distBuffer.reduce((a, b) => a + b, 0) / distBuffer.length;
-}
-
-const cvs = document.getElementById('cvs');
-const ctx = cvs.getContext('2d');
-
-/* ═══════════════════════════════════════════════════
-   CANVAS SIZE
-═══════════════════════════════════════════════════ */
-function sizeCanvas() {
-  const wrap = document.getElementById('canvas-wrap');
-  const sz = Math.min(wrap.clientWidth, wrap.clientHeight, 400);
-  cvs.width = sz; cvs.height = sz;
-}
-
-/* ═══════════════════════════════════════════════════
-   START
-═══════════════════════════════════════════════════ */
-function startTracker() {
-  const lat = parseFloat(document.getElementById('tlat').value);
-  const lon = parseFloat(document.getElementById('tlon').value);
-  tClose = parseFloat(document.getElementById('tc').value) || 10;
-  tMid   = parseFloat(document.getElementById('tm').value) || 100;
-
-  const err = document.getElementById('err');
-  if (isNaN(lat) || isNaN(lon)) { err.textContent = '⚠ Zadej platné souřadnice!'; return; }
-  if (tClose >= tMid) { err.textContent = '⚠ BLÍZKO musí být menší než STŘEDNĚ!'; return; }
-  err.textContent = '';
-
-  TLat = lat; TLon = lon;
-
-  document.getElementById('setup').style.display = 'none';
-  document.getElementById('radar-screen').style.display = 'flex';
-  sizeCanvas();
-  drawEmpty();
-
-  initGPS();
-  initCompass();
-  initSensors();
-  MULTI_EKF.init();
-  BARO.init();
-  raf = requestAnimationFrame(renderLoop);
-}
-
-/* ═══════════════════════════════════════════════════
-   GPS
-═══════════════════════════════════════════════════ */
-let gpsErrTimer = null;
-let manualMode = false;
-
-function initGPS() {
-  if (!navigator.geolocation) { setGpsSt('CHYBA'); showGpsErr(); return; }
-  setGpsSt('HLEDÁM…');
-  // If no fix in 8s, show the error/fallback panel
-  gpsErrTimer = setTimeout(() => {
-    if (!gpsOk) showGpsErr();
-  }, 8000);
-  watchId = navigator.geolocation.watchPosition(
-    p => {
-      try {
-      if (manualMode) return;
-      clearTimeout(gpsErrTimer);
-      EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
-      MULTI_EKF.syncInit(p.coords.latitude, p.coords.longitude);
-      MULTI_EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
-      BARO.updateFromGPS(p.coords.altitude);
-      if (p.coords.speed != null && p.coords.heading != null) {
-        EKF.updateGPSVelocity(p.coords.speed, p.coords.heading);
-      }
-      const pos = EKF.pos();
-      if (!pos) return;
-      curLat = pos.lat; curLon = pos.lon;
-      gpsOk = true;
-      const st = EKF.lastRejected ? `OUTL(${EKF.rejectedCount||0})` : SENS.isStill ? 'ZUPT' : 'OK';
-      setGpsSt(st);
-      } catch(err) {
-        console.error('GPS callback error:', err);
-        setGpsSt('ERR');
-      }
-    },
-    e => {
-      clearTimeout(gpsErrTimer);
-      const msgs = {1:'ODMÍTNUTO', 2:'NEDOSTUPNÉ', 3:'TIMEOUT'};
-      setGpsSt(msgs[e.code] || 'CHYBA');
-      showGpsErr();
-    },
-    { enableHighAccuracy:true, maximumAge:0, timeout:15000 }
-  );
-}
-
-function showGpsErr() {
-  document.getElementById('gps-error-panel').classList.add('show');
-}
-
-function closeGpsErr() {
-  document.getElementById('gps-error-panel').classList.remove('show');
-}
-
-function useManualPos() {
-  const lat = parseFloat(document.getElementById('man-lat').value);
-  const lon = parseFloat(document.getElementById('man-lon').value);
-  if (isNaN(lat) || isNaN(lon)) {
-    alert('Zadej platné souřadnice!'); return;
-  }
-  manualMode = true;
-  curLat = lat; curLon = lon;
-  gpsOk = true;
-  setGpsSt('MANUÁLNÍ');
-  closeGpsErr();
-}
-
-/* ═══════════════════════════════════════════════════
-   COMPASS / ORIENTATION
-═══════════════════════════════════════════════════ */
-function initCompass() {
-  if (typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission()
-      .then(s => {
-        if (s === 'granted') bindOrientation();
-        else setCmpSt('ODMÍTNUTO');
-      }).catch(() => setCmpSt('CHYBA'));
-  } else {
-    bindOrientation();
-  }
-}
-
-function bindOrientation() {
-  // Použij absolutní event pokud dostupný (správný heading od severu)
-  // Pokud absolutní není, fallback na relativní
-  // NIKDY neregistruj oba najednou — způsobuje dvojí volání s různými daty
-  if ('ondeviceorientationabsolute' in window) {
-    window.addEventListener('deviceorientationabsolute', onOrient, true);
-  } else {
-    window.addEventListener('deviceorientation', onOrient, true);
-  }
-}
-
-function onOrient(e) {
-  let h = null;
-  if (e.webkitCompassHeading != null) {
-    h = e.webkitCompassHeading;
-  } else if (e.alpha != null) {
-    h = (360 - e.alpha + 360) % 360;
-  }
-  if (h === null) return;
-
-  // Předej magnetometr do AHRS pro fúzi s gyrem
-  AHRS.onMag(h);
-  cmpOk = true;
-  document.getElementById('hdg-val').textContent = Math.round(AHRS.heading);
-}
-
-/* ═══════════════════════════════════════════════════
-   MATH — Vincenty (WGS-84 elipsoid, přesnější než Haversine)
-═══════════════════════════════════════════════════ */
-function vincenty(la1, lo1, la2, lo2) {
-  const a=6378137, b=6356752.314245, f=1/298.257223563;
+function vincenty(la1,lo1,la2,lo2){
+  const a=6378137,b=6356752.314245,f=1/298.257223563;
   const L=(lo2-lo1)*Math.PI/180;
   const U1=Math.atan((1-f)*Math.tan(la1*Math.PI/180));
   const U2=Math.atan((1-f)*Math.tan(la2*Math.PI/180));
-  const sinU1=Math.sin(U1),cosU1=Math.cos(U1);
-  const sinU2=Math.sin(U2),cosU2=Math.cos(U2);
-  let lambda=L, lambdaP, iterLimit=100;
-  let sinLambda,cosLambda,sinSigma,cosSigma,sigma,sinAlpha,cosSqAlpha,cos2SigmaM,C;
-  do {
-    sinLambda=Math.sin(lambda); cosLambda=Math.cos(lambda);
-    sinSigma=Math.sqrt((cosU2*sinLambda)**2+(cosU1*sinU2-sinU1*cosU2*cosLambda)**2);
-    if(sinSigma===0) return 0;
-    cosSigma=sinU1*sinU2+cosU1*cosU2*cosLambda;
-    sigma=Math.atan2(sinSigma,cosSigma);
-    sinAlpha=cosU1*cosU2*sinLambda/sinSigma;
-    cosSqAlpha=1-sinAlpha*sinAlpha;
-    cos2SigmaM=cosSqAlpha!==0?cosSigma-2*sinU1*sinU2/cosSqAlpha:0;
-    C=f/16*cosSqAlpha*(4+f*(4-3*cosSqAlpha));
-    lambdaP=lambda;
-    lambda=L+(1-C)*f*sinAlpha*(sigma+C*sinSigma*(cos2SigmaM+C*cosSigma*(-1+2*cos2SigmaM**2)));
-  } while(Math.abs(lambda-lambdaP)>1e-12 && --iterLimit>0);
-  if(iterLimit===0) return NaN;
-  const uSq=cosSqAlpha*(a*a-b*b)/(b*b);
-  const A_=1+uSq/16384*(4096+uSq*(-768+uSq*(320-175*uSq)));
-  const B_=uSq/1024*(256+uSq*(-128+uSq*(74-47*uSq)));
-  const deltaSigma=B_*sinSigma*(cos2SigmaM+B_/4*(cosSigma*(-1+2*cos2SigmaM**2)-B_/6*cos2SigmaM*(-3+4*sinSigma**2)*(-3+4*cos2SigmaM**2)));
-  return b*A_*(sigma-deltaSigma);
+  const sU1=Math.sin(U1),cU1=Math.cos(U1),sU2=Math.sin(U2),cU2=Math.cos(U2);
+  let lam=L,lP,it=100,sL,cL,sS,cS,sig,sA,c2A,c2M,C;
+  do{
+    sL=Math.sin(lam);cL=Math.cos(lam);
+    sS=Math.sqrt((cU2*sL)**2+(cU1*sU2-sU1*cU2*cL)**2);
+    if(sS===0)return 0;
+    cS=sU1*sU2+cU1*cU2*cL;sig=Math.atan2(sS,cS);
+    sA=cU1*cU2*sL/sS;c2A=1-sA*sA;
+    c2M=c2A?cS-2*sU1*sU2/c2A:0;
+    C=f/16*c2A*(4+f*(4-3*c2A));lP=lam;
+    lam=L+(1-C)*f*sA*(sig+C*sS*(c2M+C*cS*(-1+2*c2M**2)));
+  }while(Math.abs(lam-lP)>1e-12&&--it>0);
+  if(!it)return haversine(la1,lo1,la2,lo2);
+  const uS=c2A*(a*a-b*b)/(b*b);
+  const A_=1+uS/16384*(4096+uS*(-768+uS*(320-175*uS)));
+  const B_=uS/1024*(256+uS*(-128+uS*(74-47*uS)));
+  const dS=B_*sS*(c2M+B_/4*(cS*(-1+2*c2M**2)-B_/6*c2M*(-3+4*sS**2)*(-3+4*c2M**2)));
+  return b*A_*(sig-dS);
 }
-
-// Haversine zůstane jako fallback pro bearing
-function haversine(la1,lo1,la2,lo2) {
+function haversine(la1,lo1,la2,lo2){
   const R=6371000,p1=la1*Math.PI/180,p2=la2*Math.PI/180;
   const dp=(la2-la1)*Math.PI/180,dl=(lo2-lo1)*Math.PI/180;
   const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
-
-function bearing(la1,lo1,la2,lo2) {
+function bearing(la1,lo1,la2,lo2){
   const p1=la1*Math.PI/180,p2=la2*Math.PI/180,dl=(lo2-lo1)*Math.PI/180;
-  const y=Math.sin(dl)*Math.cos(p2);
-  const x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
-  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+  return(Math.atan2(Math.sin(dl)*Math.cos(p2),Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl))*180/Math.PI+360)%360;
 }
 
-/* ═══════════════════════════════════════════════════
-   BAROMETR — 3D vzdálenost
-═══════════════════════════════════════════════════ */
-const BARO = {
-  altitude: null,      // naše výška (m)
-  targetAlt: null,     // výška cíle (m) — nastavíme při prvním GPS
-  gpsAltSet: false,
+/* ── EKF ── */
+const EKF={
+  x:null,P:null,ok:false,
+  buf:[],BN:8,
+  lastLat:null,lastLon:null,lastAcc:10,lastT:null,
+  rej:false,rejN:0,
 
-  init() {
-    if (!window.DeviceOrientationEvent) return;
-    // Barometr přes Sensor API (Chrome Android)
-    if (typeof AbsoluteOrientationSensor !== 'undefined') return; // není potřeba
-    // Použijeme GPS altitude jako základ
+  init(la,lo){this.x=[la,lo,0,0];this.P=[1e-6,0,0,0,0,1e-6,0,0,0,0,1,0,0,0,0,1];this.ok=true;},
+
+  predict(){
+    if(!this.ok)return;
+    this.P[0]+=1e-12;this.P[5]+=1e-12;this.P[10]+=0.01;this.P[15]+=0.01;
   },
 
-  // GPS altitude pro inicializaci cíle
-  setTargetAlt(alt) {
-    if (!BARO.gpsAltSet && alt != null) {
-      BARO.targetAlt = alt;
-      BARO.gpsAltSet = true;
+  updateGPS(la,lo,ac){
+    ac=ac||10;
+    if(!this.ok){this.init(la,lo);this._save(la,lo,ac);return;}
+    const mL=MPD,mO=mpd(this.x[0]);
+    const dN=(la-this.x[0])*mL,dE=(lo-this.x[1])*mO;
+    const drift=Math.sqrt(dN*dN+dE*dE);
+    if(drift>30){
+      this.x[0]=la;this.x[1]=lo;this.x[2]=0;this.x[3]=0;
+      this.P=[1e-6,0,0,0,0,1e-6,0,0,0,0,1,0,0,0,0,1];
+      this.buf=[];this.rej=false;this.rejN=0;this._save(la,lo,ac);return;
+    }
+    if(drift>50&&ac<20){this.rej=true;this.rejN++;return;}
+    this.rej=false;
+    this.buf.push({la,lo,w:1/(ac*ac)});
+    if(this.buf.length>this.BN)this.buf.shift();
+    let ws=0,wl=0,wo=0;
+    for(const f of this.buf){ws+=f.w;wl+=f.w*f.la;wo+=f.w*f.lo;}
+    const wLa=wl/ws,wLo=wo/ws;
+    const R=Math.max(1e-12,Math.pow(ac/MPD,2));
+    const dLa=wLa-this.x[0],dLo=wLo-this.x[1];
+    const S0=this.P[0]+R,S1=this.P[5]+R;
+    const K0=this.P[0]/S0,K1=this.P[4]/S1,K2=this.P[8]/S0,K3=this.P[9]/S1,K4=this.P[12]/S0,K5=this.P[13]/S1;
+    this.x[0]+=K0*dLa+K1*dLo;
+    this.x[1]+=(this.P[1]/S0)*dLa+(this.P[5]/S1)*dLo;
+    this.x[2]+=K2*dLa+K3*dLo;this.x[3]+=K4*dLa+K5*dLo;
+    const ik0=1-K0,ik1=1-this.P[5]/S1;
+    this.P[0]*=ik0;this.P[1]*=ik0;this.P[4]*=ik1;this.P[5]*=ik1;
+    this.P[8]*=ik0;this.P[9]*=ik1;this.P[12]*=ik0;this.P[13]*=ik1;
+    this._save(la,lo,ac);
+  },
+
+  updateVel(sp,hdg){
+    if(!this.ok||sp==null||sp<0.1)return;
+    const rad=hdg*Math.PI/180,vN=sp*Math.cos(rad),vE=sp*Math.sin(rad),Rv=0.09;
+    const S2=this.P[10]+Rv,K2=this.P[10]/S2;this.x[2]+=K2*(vN-this.x[2]);this.P[10]*=(1-K2);
+    const S3=this.P[15]+Rv,K3=this.P[15]/S3;this.x[3]+=K3*(vE-this.x[3]);this.P[15]*=(1-K3);
+  },
+
+  zupt(){
+    if(!this.ok)return;
+    const Rz=1e-4,K2=this.P[10]/(this.P[10]+Rz),K3=this.P[15]/(this.P[15]+Rz);
+    this.x[2]*=(1-K2);this.x[3]*=(1-K3);this.P[10]*=(1-K2);this.P[15]*=(1-K3);
+  },
+
+  step(sN,sE){
+    if(!this.ok)return;
+    const mL=MPD,mO=mpd(this.x[0]);
+    this.x[0]+=sN/mL;this.x[1]+=sE/mO;
+    this._clamp();
+  },
+
+  _clamp(){
+    if(this.lastLat===null)return;
+    const mL=MPD,mO=mpd(this.x[0]);
+    const dN=(this.x[0]-this.lastLat)*mL,dE=(this.x[1]-this.lastLon)*mO;
+    const dist=Math.sqrt(dN*dN+dE*dE);
+    const age=(Date.now()-(this.lastT||0))/1000;
+    const maxD=this.lastAcc*1.5+age*0.7;
+    if(dist>maxD){const sc=maxD/dist;this.x[0]=this.lastLat+dN*sc/mL;this.x[1]=this.lastLon+dE*sc/mO;}
+  },
+
+  _save(la,lo,ac){this.lastLat=la;this.lastLon=lo;this.lastAcc=ac;this.lastT=Date.now();},
+  pos(){return this.ok?{lat:this.x[0],lon:this.x[1]}:null;},
+  reset(){this.x=null;this.P=null;this.ok=false;this.buf=[];this.lastLat=null;this.lastLon=null;this.lastT=null;this.lastAcc=10;this.rej=false;this.rejN=0;}
+};
+
+/* ── MULTI-EKF ── */
+const MEKF={
+  inst:[],CFGS:[{Qp:1e-13,Qv:0.01},{Qp:1e-12,Qv:0.05},{Qp:1e-11,Qv:0.15}],
+  init(){this.inst=this.CFGS.map(c=>({x:null,P:null,ok:false,Qp:c.Qp,Qv:c.Qv}));},
+  sync(la,lo){for(const e of this.inst)if(!e.ok){e.x=[la,lo,0,0];e.P=[1e-6,0,0,0,0,1e-6,0,0,0,0,1,0,0,0,0,1];e.ok=true;}},
+  gps(la,lo,ac){
+    const R=Math.max(1e-12,Math.pow((ac||10)/MPD,2));
+    for(const e of this.inst){
+      if(!e.ok)continue;
+      const dL=la-e.x[0],dO=lo-e.x[1],S0=e.P[0]+R,S1=e.P[5]+R;
+      if((dL*dL)/S0+(dO*dO)/S1>9.21)continue;
+      const K0=e.P[0]/S0,K1=e.P[4]/S1;
+      e.x[0]+=K0*dL+K1*dO;e.x[1]+=(e.P[1]/S0)*dL+(e.P[5]/S1)*dO;
+      e.P[0]*=(1-K0);e.P[5]*=(1-e.P[5]/S1);
     }
   },
-
-  updateFromGPS(alt) {
-    if (alt != null) BARO.altitude = alt;
+  predict(){for(const e of this.inst){if(!e.ok)continue;e.P[0]+=e.Qp;e.P[5]+=e.Qp;e.P[10]+=e.Qv;e.P[15]+=e.Qv;}},
+  fused(){
+    const v=this.inst.filter(e=>e.ok);if(!v.length)return null;
+    let ws=0,wl=0,wo=0;
+    for(const e of v){const w=1/Math.max(e.P[0]+e.P[5],1e-15);ws+=w;wl+=w*e.x[0];wo+=w*e.x[1];}
+    return{lat:wl/ws,lon:wo/ws};
   },
-
-  // Výpočet 3D vzdálenosti
-  dist3D(dist2D) {
-    if (BARO.altitude == null || BARO.targetAlt == null) return dist2D;
-    const dAlt = BARO.altitude - BARO.targetAlt;
-    return Math.sqrt(dist2D * dist2D + dAlt * dAlt);
-  },
-
-  reset() { BARO.altitude=null; BARO.targetAlt=null; BARO.gpsAltSet=false; }
+  reset(){this.inst=[];}
 };
 
-/* ═══════════════════════════════════════════════════
-   DOPPLER — rychlostní indikátor přiblížení
-═══════════════════════════════════════════════════ */
-const DOPPLER = {
-  distBuf: [],    // buffer posledních vzdáleností s časovými razítky
-  BUF_SIZE: 5,
-  approachRate: 0, // m/s, kladné = vzdaluješ se, záporné = blížíš se
+/* ── AHRS ── */
+const AHRS={
+  hdg:0,ok:false,magHdg:0,magBuf:[],MN:9,
+  lastT:null,pitch:0,roll:0,
 
-  update(dist) {
-    const now = Date.now();
-    DOPPLER.distBuf.push({ d: dist, t: now });
-    if (DOPPLER.distBuf.length > DOPPLER.BUF_SIZE) DOPPLER.distBuf.shift();
-    if (DOPPLER.distBuf.length < 2) return;
-    const oldest = DOPPLER.distBuf[0];
-    const newest = DOPPLER.distBuf[DOPPLER.distBuf.length - 1];
-    const dt = (newest.t - oldest.t) / 1000;
-    if (dt > 0.1) DOPPLER.approachRate = (newest.d - oldest.d) / dt;
+  medMag(h){
+    this.magBuf.push(h);if(this.magBuf.length>this.MN)this.magBuf.shift();
+    if(this.magBuf.length<3)return h;
+    const base=this.magBuf[0];
+    const n=this.magBuf.map(v=>{let d=v-base;if(d>180)d-=360;if(d<-180)d+=360;return d;}).sort((a,b)=>a-b);
+    return((base+n[Math.floor(n.length/2)])+360)%360;
   },
 
-  reset() { DOPPLER.distBuf=[]; DOPPLER.approachRate=0; }
-};
-
-/* ═══════════════════════════════════════════════════
-   PARALELNÍ EKF — 3 instance s různými parametry
-   Výsledek = vážený průměr podle kovariančního P
-═══════════════════════════════════════════════════ */
-const MULTI_EKF = {
-  // Tři různé konfigurace procesu/měření
-  configs: [
-    { Qpos: 1e-13, Qvel: 0.02 },  // konzervativní (pomalý pohyb)
-    { Qpos: 1e-12, Qvel: 0.05 },  // střední (hlavní EKF)
-    { Qpos: 1e-11, Qvel: 0.15 },  // agresivní (rychlý pohyb)
-  ],
-  // Každá instance sdílí stejnou třídu jako hlavní EKF
-  instances: [],
-
-  init() {
-    MULTI_EKF.instances = MULTI_EKF.configs.map(cfg => ({
-      x: null, P: null, initialized: false,
-      Qpos: cfg.Qpos, Qvel: cfg.Qvel,
-      mPerDegLat: 111320,
-      mPerDegLon(lat) { return 111320 * Math.cos(lat * Math.PI / 180); }
-    }));
+  onMag(raw){
+    const decl=(window.TLat&&window.TLon)?magDecl(window.TLat,window.TLon):4.5;
+    const f=this.medMag(((raw+decl)+360)%360);
+    if(!this.ok){this.hdg=f;this.magHdg=f;this.ok=true;return;}
+    this.magHdg=f;
   },
 
-  // Synchronizuj inicializaci z hlavního EKF
-  syncInit(lat, lon) {
-    for (const e of MULTI_EKF.instances) {
-      if (!e.initialized) {
-        e.x = [lat, lon, 0, 0];
-        e.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
-        e.initialized = true;
+  onMotion(e){
+    const now=Date.now();
+    if(this.lastT===null){this.lastT=now;return;}
+    const dt=Math.min((now-this.lastT)/1000,0.05);this.lastT=now;
+    if(!this.ok)return;
+    const ag=e.accelerationIncludingGravity,rr=e.rotationRate;
+    // Tilt
+    if(ag&&ag.x!=null){
+      const nm=Math.sqrt(ag.x**2+ag.y**2+ag.z**2);
+      if(nm>0.5){
+        const pA=Math.atan2(-ag.x,Math.sqrt(ag.y**2+ag.z**2))*180/Math.PI;
+        const rA=Math.atan2(ag.y,ag.z)*180/Math.PI;
+        if(rr&&rr.beta!=null){this.pitch=0.98*(this.pitch+rr.beta*dt)+0.02*pA;this.roll=0.98*(this.roll+rr.gamma*dt)+0.02*rA;}
+        else{this.pitch=pA;this.roll=rA;}
       }
     }
+    // Heading — yaw only
+    let gz=0;if(rr&&rr.alpha!=null)gz=rr.alpha;
+    const absGz=Math.abs(gz),alpha=absGz>30?0.99:absGz>5?0.97:0.90;
+    let pred=((this.hdg+gz*dt)%360+360)%360;
+    let diff=this.magHdg-pred;if(diff>180)diff-=360;if(diff<-180)diff+=360;
+    let nH=((pred+(1-alpha)*diff)+360)%360;
+    let dH=nH-this.hdg;if(dH>180)dH-=360;if(dH<-180)dH+=360;
+    const maxC=45*dt;if(Math.abs(dH)>maxC)dH=Math.sign(dH)*maxC;
+    this.hdg=((this.hdg+dH)+360)%360;
   },
 
-  updateGPS(lat, lon, accuracy) {
-    for (const e of MULTI_EKF.instances) {
-      if (!e.initialized) continue;
-      const R = Math.max(1e-12, Math.pow((accuracy||10)/e.mPerDegLat, 2));
-      const dLat=lat-e.x[0], dLon=lon-e.x[1];
-      const S00=e.P[0]+R, S11=e.P[5]+R;
-      if ((dLat*dLat)/S00+(dLon*dLon)/S11 > 9.21) continue; // outlier
-      const K0=e.P[0]/S00, K1=e.P[4]/S11;
-      e.x[0]+=K0*dLat+K1*dLon;
-      e.x[1]+=(e.P[1]/S00)*dLat+(e.P[5]/S11)*dLon;
-      e.P[0]*=(1-K0); e.P[5]*=(1-e.P[5]/S11);
-    }
+  zuptCorr(){
+    if(!this.ok)return;
+    let d=this.magHdg-this.hdg;if(d>180)d-=360;if(d<-180)d+=360;
+    this.hdg=((this.hdg+0.15*d)+360)%360;
   },
-
-  predict(aN, aE, dt) {
-    for (const e of MULTI_EKF.instances) {
-      if (!e.initialized) continue;
-      const mLat=e.mPerDegLat, mLon=e.mPerDegLon(e.x[0]);
-      e.x[0]+=(e.x[2]*dt)/mLat; e.x[1]+=(e.x[3]*dt)/mLon;
-      e.x[2]+=aN*dt; e.x[3]+=aE*dt;
-      // P += Q (zjednodušeno)
-      e.P[0]+=e.Qpos; e.P[5]+=e.Qpos;
-      e.P[10]+=e.Qvel; e.P[15]+=e.Qvel;
-    }
-  },
-
-  // Vážený průměr polohy — váha = 1/trace(P)
-  fusedPos() {
-    const valid = MULTI_EKF.instances.filter(e => e.initialized);
-    if (!valid.length) return null;
-    let wSum=0, wLat=0, wLon=0;
-    for (const e of valid) {
-      const trP = e.P[0]+e.P[5]; // trace pozičního bloku
-      const w = 1 / Math.max(trP, 1e-15);
-      wSum+=w; wLat+=w*e.x[0]; wLon+=w*e.x[1];
-    }
-    return { lat: wLat/wSum, lon: wLon/wSum };
-  },
-
-  reset() { MULTI_EKF.instances=[]; }
+  reset(){this.hdg=0;this.ok=false;this.magHdg=0;this.magBuf=[];this.lastT=null;this.pitch=0;this.roll=0;}
 };
 
-/* ═══════════════════════════════════════════════════
-   ARRIVAL CONE — přesnější detekce příchodu
-═══════════════════════════════════════════════════ */
-const CONE = {
-  // Vektory posledních N pohybů
-  moveBuf: [],
-  MOVE_SIZE: 5,
-  CONE_RADIUS: 6,    // m — cílový kruh
-  CONE_ANGLE: 45,    // ° — povolená odchylka směru k cíli
+/* ── SENS ── */
+const SENS={
+  lastT:null,accBuf:[],ZW:15,ZT:0.3,still:false,
+  sstt:'low',steps:0,vertBuf:[],VW:5,
 
-  update(myLat, myLon, tLat, tLon) {
-    CONE.moveBuf.push({ lat: myLat, lon: myLon, t: Date.now() });
-    if (CONE.moveBuf.length > CONE.MOVE_SIZE) CONE.moveBuf.shift();
+  onMotion(e){
+    const now=Date.now();
+    if(this.lastT===null){this.lastT=now;return;}
+    const dt=Math.min((now-this.lastT)/1000,0.05);this.lastT=now;
+    const ag=e.accelerationIncludingGravity;if(!ag||ag.x==null)return;
+    const mag=Math.sqrt(ag.x**2+ag.y**2+ag.z**2);
+    // ZUPT buffer
+    this.accBuf.push(mag);if(this.accBuf.length>this.ZW)this.accBuf.shift();
+    if(this.accBuf.length>=this.ZW){
+      const mean=this.accBuf.reduce((s,v)=>s+v,0)/this.accBuf.length;
+      const std=Math.sqrt(this.accBuf.reduce((s,v)=>s+(v-mean)**2,0)/this.accBuf.length);
+      this.still=std<this.ZT&&Math.abs(mean-9.81)<0.5;
+    }else this.still=false;
+    // AHRS VŽDY
+    AHRS.onMotion(e);
+    if(this.still){EKF.zupt();AHRS.zuptCorr();return;}
+    // Vertikální složka pro detekci kroků
+    const pR=AHRS.pitch*Math.PI/180,rR=AHRS.roll*Math.PI/180;
+    const gx=-Math.sin(pR),gy=Math.sin(rR)*Math.cos(pR),gz_=Math.cos(rR)*Math.cos(pR);
+    const vert=ag.x*gx+ag.y*gy+ag.z*gz_;
+    this.vertBuf.push(vert);if(this.vertBuf.length>this.VW)this.vertBuf.shift();
+    const vMax=Math.max(...this.vertBuf),vMin=Math.min(...this.vertBuf);
+    const stride=Math.max(0.3,Math.min(0.95,0.35+0.18*Math.sqrt(Math.max(0,vMax-vMin-0.5))));
+    // Peak-valley
+    if(this.sstt==='low'&&vert>10.5)this.sstt='high';
+    else if(this.sstt==='high'&&vert<8.5){
+      this.sstt='low';this.steps++;
+      document.getElementById('sval').textContent=' '+this.steps;
+      const rad=AHRS.hdg*Math.PI/180;
+      EKF.step(stride*Math.cos(rad),stride*Math.sin(rad));
+    }
+    EKF.predict();MEKF.predict();
   },
-
-  // Jsem v arrival cone?
-  check(dist, bear) {
-    // Podmínka 1: jsem blízko
-    if (dist > CONE.CONE_RADIUS * 2) return false;
-    // Podmínka 2: vektor pohybu míří k cíli
-    if (CONE.moveBuf.length < 2) return dist < CONE.CONE_RADIUS;
-    const oldest = CONE.moveBuf[0];
-    const newest = CONE.moveBuf[CONE.moveBuf.length-1];
-    // Bearing pohybu
-    const moveBear = bearing(oldest.lat, oldest.lon, newest.lat, newest.lon);
-    // Úhlová vzdálenost mezi pohybem a směrem k cíli
-    let diff = Math.abs(moveBear - bear);
-    if (diff > 180) diff = 360 - diff;
-    // Jsem v cíli pokud: blízko A (mířím k cíli NEBO stojím)
-    const dt = (newest.t - oldest.t) / 1000;
-    const moved = haversine(oldest.lat, oldest.lon, newest.lat, newest.lon);
-    const isStill = moved / Math.max(dt, 0.1) < 0.3; // < 0.3 m/s = stojím
-    return dist < CONE.CONE_RADIUS && (isStill || diff < CONE.CONE_ANGLE);
-  },
-
-  reset() { CONE.moveBuf=[]; }
+  reset(){this.lastT=null;this.accBuf=[];this.vertBuf=[];this.still=false;this.sstt='low';this.steps=0;}
 };
 
-/* ═══════════════════════════════════════════════════
-   RENDER LOOP
-═══════════════════════════════════════════════════ */
-function renderLoop() {
-  pulsePhase += 0.05;
-  scanAngle = (scanAngle + 1.2) % 360;
+/* ── DOPPLER ── */
+const DOPP={buf:[],N:5,rate:0,
+  upd(d){const now=Date.now();this.buf.push({d,t:now});if(this.buf.length>this.N)this.buf.shift();
+    if(this.buf.length<2)return;const a=this.buf[0],b=this.buf[this.buf.length-1],dt=(b.t-a.t)/1e3;
+    if(dt>0.1)this.rate=(b.d-a.d)/dt;},
+  reset(){this.buf=[];this.rate=0;}
+};
 
-  if (curLat !== undefined) {
-    // Fúze hlavního EKF + multi-EKF
-    const mainPos = EKF.pos();
-    const multiPos = MULTI_EKF.fusedPos();
-    let displayLat, displayLon;
-    if (mainPos && multiPos) {
-      // Průměr obou (váha 2:1 pro hlavní EKF)
-      displayLat = (2*mainPos.lat + multiPos.lat) / 3;
-      displayLon = (2*mainPos.lon + multiPos.lon) / 3;
-    } else {
-      displayLat = mainPos ? mainPos.lat : curLat;
-      displayLon = mainPos ? mainPos.lon : curLon;
-    }
+/* ── ARRIVAL CONE ── */
+const CONE={buf:[],N:5,R:6,A:45,
+  upd(la,lo){this.buf.push({la,lo,t:Date.now()});if(this.buf.length>this.N)this.buf.shift();},
+  chk(dist,bear){
+    if(dist>this.R*2)return false;
+    if(this.buf.length<2)return dist<this.R;
+    const a=this.buf[0],b=this.buf[this.buf.length-1];
+    const mb=bearing(a.la,a.lo,b.la,b.lo);
+    let diff=Math.abs(mb-bear);if(diff>180)diff=360-diff;
+    const dt=(b.t-a.t)/1e3,moved=haversine(a.la,a.lo,b.la,b.lo);
+    return dist<this.R&&(moved/Math.max(dt,.1)<0.3||diff<this.A);
+  },
+  reset(){this.buf=[];}
+};
 
-    // Vincenty 2D + barometr 3D
-    const dist2D  = vincenty(displayLat, displayLon, TLat, TLon);
-    const rawDist = isNaN(dist2D) ? haversine(displayLat, displayLon, TLat, TLon) : BARO.dist3D(dist2D);
-    const dist    = smoothedDist(rawDist);
-    const bear    = bearing(displayLat, displayLon, TLat, TLon);
+/* ── DIST SMOOTHER ── */
+const DS={buf:[],N:5,
+  push(d){this.buf.push(d);if(this.buf.length>this.N)this.buf.shift();return this.buf.reduce((s,v)=>s+v,0)/this.buf.length;},
+  reset(){this.buf=[];}
+};
 
-    // Doppler — rychlost přiblížení
-    DOPPLER.update(dist);
+/* ── APP STATE ── */
+window.TLat=null;window.TLon=null;
+let tC=10,tM=100,curLat,curLon,gpsOk=false,manual=false;
+let errTmr=null,watchId=null,raf=null;
+let arrived=false,arrN=0,depN=0;
 
-    // Arrival cone update
-    CONE.update(displayLat, displayLon, TLat, TLon);
-    const inCone = CONE.check(dist, bear);
+/* ── CANVAS ── */
+const cvs=document.getElementById('cvs'),ctx=cvs.getContext('2d');
+function sizeC(){const w=document.getElementById('cwrap'),s=Math.min(w.clientWidth,w.clientHeight,400);cvs.width=s;cvs.height=s;}
 
-    // Hystereze "NA MÍSTĚ" — kombinace cone + vzdálenosti
-    if (!isArrived && inCone) {
-      arrivedCount++; departedCount = 0;
-      if (arrivedCount >= ARRIVE_CONFIRM) isArrived = true;
-    } else if (isArrived && dist >= 8 && !inCone) {
-      departedCount++; arrivedCount = 0;
-      if (departedCount >= DEPART_CONFIRM) isArrived = false;
-    } else if (!isArrived) {
-      arrivedCount = 0;
-    }
-    const relBear = (bear - AHRS.heading + 360) % 360;
-    drawRadar(dist, relBear, isArrived);
-    updateInfo(dist, bear, isArrived);
-  } else {
-    drawEmpty();
-  }
-
-  raf = requestAnimationFrame(renderLoop);
+/* ── START / STOP ── */
+function startApp(){
+  const la=parseFloat(document.getElementById('tlat').value);
+  const lo=parseFloat(document.getElementById('tlon').value);
+  tC=parseFloat(document.getElementById('tc').value)||10;
+  tM=parseFloat(document.getElementById('tm').value)||100;
+  const er=document.getElementById('serr');
+  if(isNaN(la)||isNaN(lo)){er.textContent='⚠ Zadej platné souřadnice!';return;}
+  if(tC>=tM){er.textContent='⚠ BLÍZKO musí být < STŘEDNĚ!';return;}
+  er.textContent='';
+  window.TLat=la;window.TLon=lo;
+  document.getElementById('setup').style.display='none';
+  document.getElementById('radar').style.display='flex';
+  sizeC();drawEmpty();MEKF.init();
+  initGPS();initOri();initMot();
+  raf=requestAnimationFrame(loop);
 }
 
-/* ═══════════════════════════════════════════════════
-   DRAW
-═══════════════════════════════════════════════════ */
-const DIRS = ['S','SV','V','JV','J','JZ','Z','SZ'];
-const RING_COLORS = ['','#ff2020','#ff7700','#ff0000']; // 1=close,2=mid,3=far
+function stopApp(){
+  cancelAnimationFrame(raf);raf=null;
+  if(watchId)navigator.geolocation.clearWatch(watchId);
+  const abs='ondeviceorientationabsolute' in window;
+  if(abs)window.removeEventListener('deviceorientationabsolute',onOri,true);
+  else window.removeEventListener('deviceorientation',onOri,true);
+  window.removeEventListener('devicemotion',onMot);
+  EKF.reset();MEKF.reset();AHRS.reset();SENS.reset();DOPP.reset();CONE.reset();DS.reset();
+  curLat=curLon=undefined;gpsOk=false;manual=false;arrived=false;arrN=0;depN=0;
+  clearTimeout(errTmr);
+  document.getElementById('gpserr').classList.remove('show');
+  document.getElementById('radar').style.display='none';
+  document.getElementById('setup').style.display='flex';
+  document.getElementById('sval').textContent=' 0';
+  document.getElementById('hval').textContent=' ---';
+  document.getElementById('gst').textContent=' ČEKÁM';
+}
 
-function drawEmpty() { drawRadar(null, null, false); }
+/* ── GPS ── */
+function initGPS(){
+  if(!navigator.geolocation){setG('CHYBA');showGE();return;}
+  setG('HLEDÁM…');
+  errTmr=setTimeout(()=>{if(!gpsOk)showGE();},8000);
+  watchId=navigator.geolocation.watchPosition(
+    p=>{
+      try{
+        if(manual)return;
+        clearTimeout(errTmr);
+        const{latitude:la,longitude:lo,accuracy:ac,altitude:alt,speed:sp,heading:ph}=p.coords;
+        EKF.updateGPS(la,lo,ac);MEKF.sync(la,lo);MEKF.gps(la,lo,ac);
+        if(sp!=null&&ph!=null)EKF.updateVel(sp,ph);
+        const pos=EKF.pos();if(!pos)return;
+        curLat=pos.lat;curLon=pos.lon;gpsOk=true;
+        setG(EKF.rej?`OUTL(${EKF.rejN})`:SENS.still?'ZUPT':'OK');
+      }catch(e){console.error('GPS:',e);setG('ERR');}
+    },
+    e=>{clearTimeout(errTmr);setG({1:'ODMÍTNUTO',2:'NEDOSTUPNÉ',3:'TIMEOUT'}[e.code]||'CHYBA');showGE();},
+    {enableHighAccuracy:true,maximumAge:0,timeout:15000}
+  );
+}
+function showGE(){document.getElementById('gpserr').classList.add('show');}
+function closeGE(){document.getElementById('gpserr').classList.remove('show');}
+function useManual(){
+  const la=parseFloat(document.getElementById('mlat').value);
+  const lo=parseFloat(document.getElementById('mlon').value);
+  if(isNaN(la)||isNaN(lo)){alert('Platné souřadnice!');return;}
+  manual=true;curLat=la;curLon=lo;gpsOk=true;setG('MANUÁLNÍ');closeGE();
+}
 
-function drawRadar(dist, relBear, arrived) {
-  const W=cvs.width, H=cvs.height, cx=W/2, cy=H/2;
-  const maxR = W*0.46;
-  const r0 = maxR*0.115;  // center "arrived"
-  const r1 = maxR*0.35;   // close ring boundary
-  const r2 = maxR*0.66;   // mid ring boundary
-  const r3 = maxR;        // far / outer
+/* ── ORIENTATION ── */
+function initOri(){
+  const req=typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function';
+  const bind=()=>{
+    if('ondeviceorientationabsolute' in window)window.addEventListener('deviceorientationabsolute',onOri,true);
+    else window.addEventListener('deviceorientation',onOri,true);
+  };
+  if(req)DeviceOrientationEvent.requestPermission().then(s=>{if(s==='granted')bind();}).catch(()=>{});
+  else bind();
+}
+function onOri(e){
+  let h=null;
+  if(e.webkitCompassHeading!=null)h=e.webkitCompassHeading;
+  else if(e.alpha!=null)h=(360-e.alpha+360)%360;
+  if(h===null)return;
+  AHRS.onMag(h);
+  document.getElementById('hval').textContent=' '+Math.round(AHRS.hdg);
+}
 
-  // Active sector & ring
-  let activeSec = -1, activeRing = -1;
-  if (dist !== null && relBear !== null) {
-    if (arrived) {
-      activeRing = 0;
-    } else {
-      activeSec  = Math.floor(((relBear + 22.5) % 360) / 45);
-      activeRing = dist < tClose ? 1 : dist < tMid ? 2 : 3;
-    }
+/* ── MOTION ── */
+function initMot(){
+  const bind=()=>window.addEventListener('devicemotion',onMot);
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')
+    DeviceMotionEvent.requestPermission().then(s=>{if(s==='granted')bind();}).catch(()=>{});
+  else bind();
+}
+function onMot(e){SENS.onMotion(e);}
+
+/* ── LOOP ── */
+let scanA=0,pls=0;
+function loop(){
+  pls+=0.05;scanA=(scanA+1.2)%360;
+  if(curLat!==undefined){
+    const mp=EKF.pos(),fp=MEKF.fused();
+    let dLa,dLo;
+    if(mp&&fp){dLa=(2*mp.lat+fp.lat)/3;dLo=(2*mp.lon+fp.lon)/3;}
+    else{dLa=mp?mp.lat:curLat;dLo=mp?mp.lon:curLon;}
+    const v=vincenty(dLa,dLo,TLat,TLon);
+    const raw=isNaN(v)?haversine(dLa,dLo,TLat,TLon):v;
+    const dist=DS.push(raw);
+    const bear=bearing(dLa,dLo,TLat,TLon);
+    DOPP.upd(dist);CONE.upd(dLa,dLo);
+    const inC=CONE.chk(dist,bear);
+    if(!arrived&&inC){arrN++;depN=0;if(arrN>=4)arrived=true;}
+    else if(arrived&&dist>=8&&!inC){depN++;arrN=0;if(depN>=4)arrived=false;}
+    else if(!arrived)arrN=0;
+    const rel=(bear-AHRS.hdg+360)%360;
+    drawR(dist,rel,arrived);updInfo(dist,bear,arrived);
+  }else drawEmpty();
+  raf=requestAnimationFrame(loop);
+}
+
+/* ── DRAW ── */
+const DIRS=['S','SV','V','JV','J','JZ','Z','SZ'];
+const RC=['','#ff2020','#ff7700','#ff0000'];
+
+function drawEmpty(){drawR(null,null,false);}
+function hexA(h,a){const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return`rgba(${r},${g},${b},${a})`;}
+
+function drawR(dist,relB,arr){
+  const W=cvs.width,H=cvs.height,cx=W/2,cy=H/2,mR=W*.46;
+  const r0=mR*.115,r1=mR*.35,r2=mR*.66,r3=mR;
+  let aS=-1,aR=-1;
+  if(dist!==null&&relB!==null){
+    if(arr)aR=0;
+    else{aS=Math.floor(((relB+22.5)%360)/45);aR=dist<tC?1:dist<tM?2:3;}
   }
-
   ctx.clearRect(0,0,W,H);
-
-  // ── Background subtle glow center
-  const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,maxR);
-  bg.addColorStop(0,'rgba(50,5,5,.18)');
-  bg.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(cx,cy,maxR,0,Math.PI*2); ctx.fill();
-
-  // ── Draw 8 sectors × 3 rings
-  for (let s=0; s<8; s++) {
-    const aStart = (s*45 - 90 - 22.5) * Math.PI/180;
-    const aEnd   = aStart + 45*Math.PI/180;
-
-    for (let r=1; r<=3; r++) {
-      const iR = r===1 ? r0 : r===2 ? r1 : r2;
-      const oR = r===1 ? r1 : r===2 ? r2 : r3;
-      const isActive = (s===activeSec && r===activeRing);
-
-      ctx.save();
-      ctx.beginPath();
-      // inner arc start point
-      ctx.moveTo(cx + iR*Math.cos(aStart), cy + iR*Math.sin(aStart));
-      ctx.arc(cx,cy,oR,aStart,aEnd);
-      ctx.arc(cx,cy,iR,aEnd,aStart,true);
-      ctx.closePath();
-
-      if (isActive) {
-        const pulse = 0.7 + 0.3*Math.sin(pulsePhase);
-        const col   = RING_COLORS[r];
-        ctx.fillStyle = hexAlpha(col, 0.25*pulse);
-        ctx.shadowColor= col;
-        ctx.shadowBlur = 22*pulse;
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        // bright stroke
-        ctx.strokeStyle = hexAlpha(col, 0.9);
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = 'rgba(30,0,0,0.45)';
-        ctx.fill();
-        ctx.strokeStyle = '#220b0b';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      }
+  const bg=ctx.createRadialGradient(cx,cy,0,cx,cy,mR);
+  bg.addColorStop(0,'rgba(50,5,5,.18)');bg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy,mR,0,Math.PI*2);ctx.fill();
+  // Výseče
+  for(let s=0;s<8;s++){
+    const a0=(s*45-90-22.5)*Math.PI/180,a1=a0+45*Math.PI/180;
+    for(let r=1;r<=3;r++){
+      const iR=r===1?r0:r===2?r1:r2,oR=r===1?r1:r===2?r2:r3,act=s===aS&&r===aR;
+      ctx.save();ctx.beginPath();
+      ctx.moveTo(cx+iR*Math.cos(a0),cy+iR*Math.sin(a0));
+      ctx.arc(cx,cy,oR,a0,a1);ctx.arc(cx,cy,iR,a1,a0,true);ctx.closePath();
+      if(act){const p=.7+.3*Math.sin(pls),c=RC[r];ctx.fillStyle=hexA(c,.25*p);ctx.shadowColor=c;ctx.shadowBlur=22*p;ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle=hexA(c,.9);ctx.lineWidth=1.8;ctx.stroke();}
+      else{ctx.fillStyle='rgba(30,0,0,.45)';ctx.fill();ctx.strokeStyle='#220b0b';ctx.lineWidth=.5;ctx.stroke();}
       ctx.restore();
     }
   }
-
-  // ── Radial divider lines
+  // Čáry + kružnice
   ctx.save();
-  for (let s=0; s<8; s++) {
-    const angle = (s*45 - 90)*Math.PI/180;
-    ctx.beginPath();
-    ctx.moveTo(cx + r0*Math.cos(angle), cy + r0*Math.sin(angle));
-    ctx.lineTo(cx + r3*Math.cos(angle), cy + r3*Math.sin(angle));
-    ctx.strokeStyle='#280e0e'; ctx.lineWidth=0.7; ctx.stroke();
-  }
+  for(let s=0;s<8;s++){const a=(s*45-90)*Math.PI/180;ctx.beginPath();ctx.moveTo(cx+r0*Math.cos(a),cy+r0*Math.sin(a));ctx.lineTo(cx+r3*Math.cos(a),cy+r3*Math.sin(a));ctx.strokeStyle='#280e0e';ctx.lineWidth=.7;ctx.stroke();}
+  [r1,r2,r3].forEach(r=>{ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle='#280e0e';ctx.lineWidth=.8;ctx.stroke();});
   ctx.restore();
-
-  // ── Ring circles
+  // Scan
+  const sa=(scanA-90)*Math.PI/180;
   ctx.save();
-  [r1,r2,r3].forEach(r => {
-    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-    ctx.strokeStyle='#280e0e'; ctx.lineWidth=0.8; ctx.stroke();
-  });
+  ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r3,sa-.7,sa);ctx.closePath();
+  const sw=ctx.createRadialGradient(cx,cy,0,cx,cy,r3);
+  sw.addColorStop(0,'rgba(255,32,32,0)');sw.addColorStop(1,'rgba(255,32,32,.07)');
+  ctx.fillStyle=sw;ctx.fill();
+  ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+r3*Math.cos(sa),cy+r3*Math.sin(sa));
+  ctx.strokeStyle='rgba(255,32,32,.6)';ctx.lineWidth=1.5;ctx.stroke();
   ctx.restore();
-
-  // ── Scan sweep line
-  const sa = (scanAngle - 90)*Math.PI/180;
-  const grad = ctx.createConicalGradient
-    ? null // not standard
-    : null;
-  // Radial fade from scan line
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.arc(cx,cy,r3, sa - 0.7, sa);
-  ctx.closePath();
-  const sweep = ctx.createRadialGradient(cx,cy,0,cx,cy,r3);
-  sweep.addColorStop(0,'rgba(255,32,32,0)');
-  sweep.addColorStop(1,'rgba(255,32,32,0.07)');
-  ctx.fillStyle = sweep;
-  ctx.fill();
-
-  // Scan line itself
-  ctx.beginPath();
-  ctx.moveTo(cx,cy);
-  ctx.lineTo(cx + r3*Math.cos(sa), cy + r3*Math.sin(sa));
-  ctx.strokeStyle='rgba(255,32,32,0.6)';
-  ctx.lineWidth=1.5; ctx.stroke();
+  // Střed
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r0,0,Math.PI*2);
+  if(arr){const p=.6+.4*Math.sin(pls*1.5);ctx.fillStyle=`rgba(255,32,32,${p})`;ctx.shadowColor='#f20';ctx.shadowBlur=30*p;}
+  else ctx.fillStyle='rgba(60,0,0,.8)';
+  ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle=arr?'#f20':'#660';ctx.lineWidth=arr?2:.8;ctx.stroke();
+  ctx.fillStyle=arr?'#000':'#660';ctx.textAlign='center';ctx.textBaseline='middle';
+  const fs=r0*.42;ctx.font=`900 ${fs}px 'Orbitron',sans-serif`;ctx.fillText('TU',cx,cy-fs*.35);
+  ctx.font=`400 ${fs*.72}px 'Orbitron',sans-serif`;ctx.fillText('JSI',cx,cy+fs*.55);
   ctx.restore();
-
-  // ── Center circle
-  ctx.save();
-  const isCtr = arrived;
-  ctx.beginPath(); ctx.arc(cx,cy,r0,0,Math.PI*2);
-  if (isCtr) {
-    const p = 0.6+0.4*Math.sin(pulsePhase*1.5);
-    ctx.fillStyle = `rgba(255,32,32,${p})`;
-    ctx.shadowColor='#ff2020'; ctx.shadowBlur=30*p;
-  } else {
-    ctx.fillStyle='rgba(60,0,0,0.8)';
-  }
-  ctx.fill(); ctx.shadowBlur=0;
-  ctx.strokeStyle = isCtr ? '#ff2020' : '#660000';
-  ctx.lineWidth = isCtr ? 2 : 0.8;
-  ctx.stroke();
-
-  ctx.fillStyle = isCtr ? '#000' : '#660000';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  const fs = r0*0.42;
-  ctx.font = `900 ${fs}px 'Orbitron',sans-serif`;
-  ctx.fillText('TU', cx, cy-fs*0.35);
-  ctx.font = `400 ${fs*0.72}px 'Orbitron',sans-serif`;
-  ctx.fillText('JSI', cx, cy+fs*0.55);
-  ctx.restore();
-
-  // ── Direction labels
-  ctx.save();
-  const lblR = r3 + 15;
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.font = `700 ${W*0.029}px 'Orbitron',sans-serif`;
-  DIRS.forEach((d,i) => {
-    const angle = (i*45 - 90)*Math.PI/180;
-    const isActDir = (i === activeSec);
-    ctx.fillStyle = isActDir ? '#ff2020' : '#5a1a1a';
-    if (isActDir) { ctx.shadowColor='#ff2020'; ctx.shadowBlur=8; }
-    else ctx.shadowBlur=0;
-    ctx.fillText(d, cx+lblR*Math.cos(angle), cy+lblR*Math.sin(angle));
-  });
-  ctx.shadowBlur=0; ctx.restore();
-
-  // ── Legend dots
-  drawLegend(W, H);
+  // Popisky
+  ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`700 ${W*.028}px 'Orbitron',sans-serif`;
+  DIRS.forEach((d,i)=>{const a=(i*45-90)*Math.PI/180,act=i===aS;ctx.fillStyle=act?'#f20':'#5a1a1a';if(act){ctx.shadowColor='#f20';ctx.shadowBlur=8;}else ctx.shadowBlur=0;ctx.fillText(d,cx+(r3+14)*Math.cos(a),cy+(r3+14)*Math.sin(a));});
+  ctx.shadowBlur=0;ctx.restore();
+  // Legenda
+  const leg=[{c:'#0f4',l:'BLÍZKO'},{c:'#f70',l:'STŘEDNĚ'},{c:'#f00',l:'DALEKO'}];
+  ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`${W*.024}px 'Share Tech Mono',monospace`;
+  leg.forEach((it,i)=>{const x=7,y=H*.93+i*(W*.031+2)-(leg.length-1)*(W*.031+2)/2;ctx.fillStyle=it.c;ctx.beginPath();ctx.arc(x+4,y,3.5,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(200,40,40,.6)';ctx.fillText(it.l,x+12,y);});
 }
 
-function drawLegend(W, H) {
-  const items = [
-    {col:'#00ff41',lbl:'BLÍZKO'},
-    {col:'#ff7700',lbl:'STŘEDNĚ'},
-    {col:'#ff0000',lbl:'DALEKO'},
-  ];
-  ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.font = `${W*0.025}px 'Share Tech Mono',monospace`;
-  items.forEach((it,i) => {
-    const x=8, y=H*0.93+i*(W*0.032+2)-(items.length-1)*(W*0.032+2)/2;
-    ctx.fillStyle=it.col;
-    ctx.beginPath(); ctx.arc(x+5, y, 4,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(200,40,40,.6)';
-    ctx.fillText(it.lbl, x+14, y);
-  });
-}
-
-function hexAlpha(hex, a) {
-  const r=parseInt(hex.slice(1,3),16);
-  const g=parseInt(hex.slice(3,5),16);
-  const b=parseInt(hex.slice(5,7),16);
-  return `rgba(${r},${g},${b},${a})`;
-}
-
-/* ═══════════════════════════════════════════════════
-   INFO BAR
-═══════════════════════════════════════════════════ */
-const DIRS8 = ['S','SV','V','JV','J','JZ','Z','SZ'];
-
-function updateInfo(dist, bear, arrived) {
-  const dv = document.getElementById('dist-val');
-  const di = document.getElementById('dir-val');
-  const dirLbl = DIRS8[Math.round(bear/45)%8];
-
-  if (arrived) {
-    dv.style.color='var(--green)';
-    dv.textContent='● NA MÍSTĚ ●';
-    dv.classList.add('blink');
-    di.textContent='Cíl dosažen!';
-  } else {
+/* ── INFO ── */
+const D8=['S','SV','V','JV','J','JZ','Z','SZ'];
+function updInfo(dist,bear,arr){
+  const dv=document.getElementById('dval'),di=document.getElementById('dirv'),dl=D8[Math.round(bear/45)%8];
+  if(arr){dv.style.color='#f20';dv.textContent='● NA MÍSTĚ ●';dv.classList.add('blink');di.textContent='Cíl dosažen!';}
+  else{
     dv.classList.remove('blink');
-    dv.style.color = dist<tClose ? '#ff2020' : dist<tMid ? 'var(--amber)' : '#ff0000';
-    dv.textContent = dist<1000 ? Math.round(dist)+' m' : (dist/1000).toFixed(2)+' km';
-    const approach = DOPPLER.approachRate;
-    const dopplerStr = Math.abs(approach) > 0.2
-      ? (approach < 0 ? ` ↓${Math.abs(approach).toFixed(1)}m/s` : ` ↑${approach.toFixed(1)}m/s`)
-      : '';
-    const modeLabel = SENS.isStill ? '  ◉ ZUPT' : `  ◉ ${SENS.stepCount}kr`;
-    di.textContent = `Azimut: ${Math.round(bear)}° ${dirLbl}  |  HDG: ${Math.round(AHRS.heading)}°${modeLabel}${dopplerStr}`;
+    dv.style.color=dist<tC?'#f20':dist<tM?'#f70':'#f00';
+    dv.textContent=dist<1000?Math.round(dist)+' m':(dist/1e3).toFixed(2)+' km';
+    const ap=DOPP.rate,ds=Math.abs(ap)>.2?(ap<0?` ↓${Math.abs(ap).toFixed(1)}m/s`:` ↑${ap.toFixed(1)}m/s`):'';
+    const st=SENS.still?'◉ ZUPT':`◉ ${SENS.steps}kr`;
+    di.textContent=`${Math.round(bear)}° ${dl} | HDG ${Math.round(AHRS.hdg)}° | ${st}${ds}`;
   }
 }
-
-/* ═══════════════════════════════════════════════════
-   STATUS
-═══════════════════════════════════════════════════ */
-function setGpsSt(s) { document.getElementById('gps-st').textContent=' '+s; }
-function setCmpSt(s) { /* cmp-st element odstraněn z UI — ignoruj */ }
-
-/* ═══════════════════════════════════════════════════
-   BACK
-═══════════════════════════════════════════════════ */
-function goBack() {
-  cancelAnimationFrame(raf);
-  if (watchId) navigator.geolocation.clearWatch(watchId);
-  if ('ondeviceorientationabsolute' in window) {
-    window.removeEventListener('deviceorientationabsolute', onOrient, true);
-  } else {
-    window.removeEventListener('deviceorientation', onOrient, true);
-  }
-  curLat=curLon=undefined; smoothHdg=null; gpsOk=cmpOk=false; manualMode=false;
-  clearTimeout(gpsErrTimer);
-  EKF.reset(); SENS.reset(); AHRS.reset();
-  MULTI_EKF.reset(); BARO.reset(); DOPPLER.reset(); CONE.reset();
-  EKF.lastRejected=false; EKF.rejectedCount=0;
-  distBuffer.length=0; arrivedCount=0; departedCount=0; isArrived=false;
-  document.getElementById('gps-error-panel').classList.remove('show');
-  document.getElementById('radar-screen').style.display='none';
-  document.getElementById('setup').style.display='flex';
-}
-
-window.addEventListener('resize', () => { sizeCanvas(); });
+function setG(s){document.getElementById('gst').textContent=' '+s;}
+window.addEventListener('resize',sizeC);
 </script>
 </body>
 </html>
