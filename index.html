@@ -520,13 +520,7 @@ const AHRS = {
   lastT: null,
   gyroZ: 0,
   magHeading: 0,
-
-  // Mediánový buffer raw magnetometru
   magBuf: [], MAG_BUF: 9,
-
-  // Rate limiting — max stupňů za sekundu
-  MAX_RATE: 90,
-  lastMagT: null,
 
   // Mediánový filtr — odstraní špičky
   medianMag(h) {
@@ -568,16 +562,13 @@ const AHRS = {
     if (!AHRS.initialized) return;
 
     const rr = e.rotationRate;
+    // Pouze yaw (alpha) — ignoruj beta/gamma (tilt) které dělají problémy
     let gz = 0;
-    if (rr) gz = (rr.alpha != null) ? rr.alpha : 0;
+    if (rr && rr.alpha != null) gz = rr.alpha;
 
-    // Dynamická alpha — čím rychlejší rotace, tím více věříme gyru
+    // Dynamická alpha
     const absGz = Math.abs(gz);
-    const dynAlpha = absGz > 30
-      ? 0.99   // rychlá rotace → 99% gyro
-      : absGz > 5
-        ? 0.97  // normální otáčení
-        : 0.90; // pomalu/stojíš → více magnetometru
+    const dynAlpha = absGz > 30 ? 0.99 : absGz > 5 ? 0.97 : 0.90;
 
     let gyroPred = AHRS.heading + gz * dt;
     gyroPred = ((gyroPred % 360) + 360) % 360;
@@ -589,14 +580,13 @@ const AHRS = {
 
     let newHeading = ((gyroPred + (1 - dynAlpha) * diff) + 360) % 360;
 
-    // Rate limiting — max 90°/s změna
+    // Rate limit 45°/s
     let hdgDiff = newHeading - AHRS.heading;
     if (hdgDiff >  180) hdgDiff -= 360;
     if (hdgDiff < -180) hdgDiff += 360;
-    const maxChange = AHRS.MAX_RATE * dt;
-    if (Math.abs(hdgDiff) > maxChange) {
-      hdgDiff = Math.sign(hdgDiff) * maxChange;
-    }
+    const maxChange = 45 * dt;
+    if (Math.abs(hdgDiff) > maxChange) hdgDiff = Math.sign(hdgDiff) * maxChange;
+
     AHRS.heading = ((AHRS.heading + hdgDiff) + 360) % 360;
     AHRS.gyroZ = gz;
   },
