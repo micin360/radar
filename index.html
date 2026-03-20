@@ -313,24 +313,62 @@ const EKF = {
     );
   },
 
-  // GPS poloha — outlier rejection + vážený buffer
+  // GPS poloha — GPS je vždy kotva, EKF jen interpoluje mezi fixy
   updateGPS(lat, lon, accuracy) {
     if (!EKF.initialized) { EKF.init(lat, lon); return; }
-    // Vážený průměr bufferu před outlier testem
-    const w = EKF.weightedGPS(lat, lon, accuracy || 10);
+
     const R = Math.max(1e-12, Math.pow((accuracy || 10) / EKF.mPerDegLat, 2));
-    const dLat = w.lat - EKF.x[0], dLon = w.lon - EKF.x[1];
+    const dLat = lat - EKF.x[0], dLon = lon - EKF.x[1];
     const S00 = EKF.P[0] + R, S11 = EKF.P[5] + R;
     const mahal2 = (dLat*dLat)/S00 + (dLon*dLon)/S11;
-    if (mahal2 > 9.21) { EKF.lastRejected = true; EKF.rejectedCount = (EKF.rejectedCount||0)+1; return; }
+
+    // Vzdálenost EKF od GPS v metrech
+    const distDrift = Math.sqrt(
+      (dLat * EKF.mPerDegLat)**2 +
+      (dLon * EKF.mPerDegLon(EKF.x[0]))**2
+    );
+
+    // Pokud EKF zdriftoval více než 30m od GPS → tvrdý reset na GPS
+    // GPS je ground truth, EKF drift je chyba filtru
+    if (distDrift > 30) {
+      EKF.x[0] = lat; EKF.x[1] = lon;
+      EKF.x[2] = 0;   EKF.x[3] = 0; // reset rychlosti
+      // Resetuj P — vysoká nejistota po resetu
+      EKF.P = [1e-6,0,0,0, 0,1e-6,0,0, 0,0,1,0, 0,0,0,1];
+      EKF.gpsBuf = []; // vyčisti vážený buffer
+      EKF.lastRejected = false;
+      EKF.rejectedCount = 0;
+      return;
+    }
+
+    // Outlier rejection pouze pro extrémní skoky GPS (>50m při accuracy<20m)
+    // = skutečně špatný fix, ne EKF drift
+    const gpsJump = distDrift > 50 && (accuracy || 10) < 20;
+    if (gpsJump) {
+      EKF.lastRejected = true;
+      EKF.rejectedCount = (EKF.rejectedCount||0)+1;
+      return;
+    }
     EKF.lastRejected = false;
+
+    // Zapamatuj poslední platný GPS fix pro clamping
+    EKF.lastGPSLat = lat;
+    EKF.lastGPSLon = lon;
+    EKF.lastGPSAccuracy = accuracy || 10;
+    EKF.lastGPSTime = Date.now();
+
+    // Vážený GPS buffer
+    const w = EKF.weightedGPS(lat, lon, accuracy || 10);
+    const wLat = w.lat - EKF.x[0], wLon = w.lon - EKF.x[1];
+
+    // Standardní Kalman update
     const K0=EKF.P[0]/S00,  K1=EKF.P[4]/S11,
           K2=EKF.P[8]/S00,  K3=EKF.P[9]/S11,
           K4=EKF.P[12]/S00, K5=EKF.P[13]/S11;
-    EKF.x[0] += K0*dLat + K1*dLon;
-    EKF.x[1] += (EKF.P[1]/S00)*dLat + (EKF.P[5]/S11)*dLon;
-    EKF.x[2] += K2*dLat + K3*dLon;
-    EKF.x[3] += K4*dLat + K5*dLon;
+    EKF.x[0] += K0*wLat + K1*wLon;
+    EKF.x[1] += (EKF.P[1]/S00)*wLat + (EKF.P[5]/S11)*wLon;
+    EKF.x[2] += K2*wLat + K3*wLon;
+    EKF.x[3] += K4*wLat + K5*wLon;
     const ik0=1-K0, ik5=1-EKF.P[5]/S11;
     EKF.P[0]*=ik0; EKF.P[1]*=ik0; EKF.P[4]*=ik5; EKF.P[5]*=ik5;
     EKF.P[8]*=ik0; EKF.P[9]*=ik5; EKF.P[12]*=ik0; EKF.P[13]*=ik5;
@@ -366,8 +404,34 @@ const EKF = {
     EKF.P[10] *= (1-K2); EKF.P[15] *= (1-K3);
   },
 
-  pos() { return EKF.initialized ? {lat:EKF.x[0], lon:EKF.x[1]} : null; },
-  reset() { EKF.x=null; EKF.P=null; EKF.initialized=false; EKF.gpsBuf=[]; },
+  // Tracking posledního GPS fixu pro clamping
+  lastGPSLat: null, lastGPSLon: null,
+  lastGPSAccuracy: 10,
+  lastGPSTime: null,
+
+  // Clamp EKF pozice na GPS accuracy rádius od posledního fixu
+  clampToGPSRadius() {
+    if (!EKF.initialized || EKF.lastGPSLat === null) return;
+    const mLat = EKF.mPerDegLat;
+    const mLon = EKF.mPerDegLon(EKF.x[0]);
+    const dN = (EKF.x[0] - EKF.lastGPSLat) * mLat;
+    const dE = (EKF.x[1] - EKF.lastGPSLon) * mLon;
+    const dist = Math.sqrt(dN*dN + dE*dE);
+    // Povolená zóna = accuracy × 1.5 + čas bez fixu × 0.5 m/s (chůze)
+    const timeSinceFix = (Date.now() - EKF.lastGPSTime) / 1000;
+    const maxDrift = EKF.lastGPSAccuracy * 1.5 + timeSinceFix * 0.7;
+    if (dist > maxDrift) {
+      // Ořízni na hranici povolené zóny
+      const scale = maxDrift / dist;
+      EKF.x[0] = EKF.lastGPSLat + (dN * scale) / mLat;
+      EKF.x[1] = EKF.lastGPSLon + (dE * scale) / mLon;
+    }
+  },
+  reset() {
+    EKF.x=null; EKF.P=null; EKF.initialized=false; EKF.gpsBuf=[];
+    EKF.lastGPSLat=null; EKF.lastGPSLon=null;
+    EKF.lastGPSTime=null; EKF.lastGPSAccuracy=10;
+  },
   mat4Mul(A,B){const C=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)C[i*4+j]+=A[i*4+k]*B[k*4+j];return C;},
   mat4T(A){const T=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)T[j*4+i]=A[i*4+j];return T;},
   matAdd(A,B){return A.map((v,i)=>v+B[i]);}
@@ -420,71 +484,86 @@ const SENS = {
       }
     }
 
-    // Gravitační složky v horizontální rovině (pro odečtení z acc)
-    const gN = 9.81 * Math.sin(SENS.pitch * Math.PI / 180);
-    const gE = 9.81 * Math.sin(SENS.roll  * Math.PI / 180);
-
     const mag = Math.sqrt(ag.x**2 + ag.y**2 + ag.z**2);
 
-    // ZUPT detekce
+    // ZUPT detekce — vždy aktualizuj buffer
     SENS.accBuf.push(mag);
     if (SENS.accBuf.length > SENS.ZUPT_WIN) SENS.accBuf.shift();
+
     if (SENS.accBuf.length >= SENS.ZUPT_WIN) {
       const mean = SENS.accBuf.reduce((s,v)=>s+v,0)/SENS.accBuf.length;
       const std  = Math.sqrt(SENS.accBuf.reduce((s,v)=>s+(v-mean)**2,0)/SENS.accBuf.length);
-      SENS.isStill = std < SENS.ZUPT_THR;
-      if (SENS.isStill) {
-        EKF.zupt();
-        // ZUPT heading korekce — táhni AHRS heading k magnetometru
-        AHRS.zuptCorrect();
-        return;
-      }
+      // Rozptyl magnitudy kolem gravitace — stojíš = std blízko 0
+      // Navíc zkontroluj že mean je blízko 9.81 (= gravitace, ne pohyb)
+      const nearGravity = Math.abs(mean - 9.81) < 0.5;
+      SENS.isStill = std < SENS.ZUPT_THR && nearGravity;
+    } else {
+      SENS.isStill = false; // buffer se plní — nevíme jestli stojíme
     }
 
-    // Pohyb — tilt-kompenzovaná akcelerace
-    let aN = 0, aE = 0;
-    if (a && a.x != null && (Math.abs(a.x)+Math.abs(a.y)+Math.abs(a.z)) > 0.01) {
-      const rad = AHRS.heading * Math.PI / 180;
-      // Odečti odhadnutou gravitační komponentu
-      const ax_c = a.x - gE;
-      const ay_c = a.y - gN;
-      aN =  ay_c * Math.cos(rad) + ax_c * Math.sin(rad);
-      aE = -ay_c * Math.sin(rad) + ax_c * Math.cos(rad);
-      if (Math.abs(aN) < 0.1) aN = 0;
-      if (Math.abs(aE) < 0.1) aE = 0;
-    }
-
-    // AHRS gyro fúze
+    // AHRS gyro fúze — VŽDY, i při ZUPT (jinak heading zaostane)
     AHRS.onMotion(e);
-    EKF.predict(aN, aE, dt);
-    MULTI_EKF.predict(aN, aE, dt);
 
-    // --- Adaptivní délka kroku ---
-    SENS.recentMags.push(mag);
+    if (SENS.isStill) {
+      EKF.zupt();
+      AHRS.zuptCorrect();
+      // Nepředáváme akceleraci do EKF — stojíme
+      return;
+    }
+
+    // Pohyb — POUZE přes detekci kroků + heading vektor
+    // Akcelerometr raw NEVKLÁDÁME do EKF (kumuluje drift)
+    // EKF predict bez pohybové složky — pouze šum procesu
+    EKF.predict(0, 0, dt);
+    MULTI_EKF.predict(0, 0, dt);
+
+    // --- Vertikální složka akcelerace pro detekci kroků ---
+    // Použij pitch/roll z tilt kompenzace k izolaci vertikální osy
+    // Vertikální osa = ag promítnutá na vektor gravitace
+    // → invariantní vůči rotaci telefonu v ruce
+    const pitchR = SENS.pitch * Math.PI / 180;
+    const rollR  = SENS.roll  * Math.PI / 180;
+    // Jednotkový vektor gravitace v souřadnicích telefonu
+    const gx = -Math.sin(pitchR);
+    const gy =  Math.sin(rollR) * Math.cos(pitchR);
+    const gz =  Math.cos(rollR) * Math.cos(pitchR);
+    // Vertikální složka = projekce ag na vektor gravitace
+    const vertAcc = ag.x*gx + ag.y*gy + ag.z*gz;
+
+    // Klouzavý průměr vertikální složky pro vyhlazení
+    SENS.recentMags.push(vertAcc);
     if (SENS.recentMags.length > SENS.STRIDE_WIN) SENS.recentMags.shift();
-    const avgMag = SENS.recentMags.reduce((s,v)=>s+v,0)/SENS.recentMags.length;
-    // Weinberg model: strideLen = k * (max-min)^0.25
-    const accPeak = Math.max(...SENS.recentMags);
-    const accMin  = Math.min(...SENS.recentMags);
+    const avgVert = SENS.recentMags.reduce((s,v)=>s+v,0)/SENS.recentMags.length;
+
+    // Adaptivní délka kroku z amplitudy vertikální akcelerace
+    const vertAmplitude = Math.max(...SENS.recentMags) - Math.min(...SENS.recentMags);
     const strideLen = Math.max(0.3, Math.min(0.95,
-      0.35 + 0.18 * Math.sqrt(Math.max(0, avgMag - 9.81))
+      0.35 + 0.18 * Math.sqrt(Math.max(0, vertAmplitude - 0.5))
     ));
 
-    // Detekce kroků
-    if (SENS.stepState==='low' && mag > SENS.stepHigh) {
+    // Detekce kroků z vertikální složky — rotace telefonu ji nemění
+    // Peak nad 10.5 m/s² = vrchol kroku, valley pod 8.5 m/s² = dno kroku
+    if (SENS.stepState==='low' && vertAcc > 10.5) {
       SENS.stepState = 'high';
-    } else if (SENS.stepState==='high' && mag < SENS.stepLow) {
+    } else if (SENS.stepState==='high' && vertAcc < 8.5) {
       SENS.stepState = 'low';
       SENS.stepCount++;
-      // Přidej krok přímo do EKF jako posun
-      const rad = AHRS.heading * Math.PI / 180;
-      const stepN = strideLen * Math.cos(rad);
-      const stepE = strideLen * Math.sin(rad);
-      const mLat = EKF.mPerDegLat;
-      const mLon = EKF.mPerDegLon(EKF.x ? EKF.x[0] : 50);
+      // Injektuj krok jako polohovací vektor do EKF
+      // heading z AHRS = směr pohybu
       if (EKF.initialized) {
-        EKF.x[0] += stepN / mLat * 0.3; // slabá korekce — EKF ji váží
-        EKF.x[1] += stepE / mLon * 0.3;
+        const rad = AHRS.heading * Math.PI / 180;
+        const stepN = strideLen * Math.cos(rad);
+        const stepE = strideLen * Math.sin(rad);
+        const mLat  = EKF.mPerDegLat;
+        const mLon  = EKF.mPerDegLon(EKF.x[0]);
+        // Přidej krok jako přímý posun — GPS fix ho koriguje
+        EKF.x[0] += stepN / mLat;
+        EKF.x[1] += stepE / mLon;
+        // Nastav rychlost podle kroku
+        EKF.x[2] = stepN / Math.max(dt * 20, 0.5);
+        EKF.x[3] = stepE / Math.max(dt * 20, 0.5);
+        // Clamp na GPS accuracy rádius — krok nesmí překročit povolenou zónu
+        EKF.clampToGPSRadius();
       }
     }
   },
@@ -693,7 +772,8 @@ function initGPS() {
       MULTI_EKF.syncInit(p.coords.latitude, p.coords.longitude);
       MULTI_EKF.updateGPS(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 10);
       BARO.updateFromGPS(p.coords.altitude);
-      if (!BARO.gpsAltSet) BARO.setTargetAlt(p.coords.altitude);
+      // Výšku cíle nastavujeme pouze pokud uživatel stojí na cíli —
+      // z GPS souřadnic vzdáleného cíle výšku neznáme, necháme null → fallback 2D
       if (p.coords.speed != null && p.coords.heading != null) {
         EKF.updateGPSVelocity(p.coords.speed, p.coords.heading);
       }
@@ -751,8 +831,14 @@ function initCompass() {
 }
 
 function bindOrientation() {
-  window.addEventListener('deviceorientationabsolute', onOrient, true);
-  window.addEventListener('deviceorientation', onOrient, true);
+  // Použij absolutní event pokud dostupný (správný heading od severu)
+  // Pokud absolutní není, fallback na relativní
+  // NIKDY neregistruj oba najednou — způsobuje dvojí volání s různými daty
+  if ('ondeviceorientationabsolute' in window) {
+    window.addEventListener('deviceorientationabsolute', onOrient, true);
+  } else {
+    window.addEventListener('deviceorientation', onOrient, true);
+  }
 }
 
 function onOrient(e) {
@@ -1265,7 +1351,7 @@ function updateInfo(dist, bear, arrived) {
    STATUS
 ═══════════════════════════════════════════════════ */
 function setGpsSt(s) { document.getElementById('gps-st').textContent=' '+s; }
-function setCmpSt(s) { document.getElementById('cmp-st').textContent=' '+s; }
+function setCmpSt(s) { /* cmp-st element odstraněn z UI — ignoruj */ }
 
 /* ═══════════════════════════════════════════════════
    BACK
@@ -1273,8 +1359,11 @@ function setCmpSt(s) { document.getElementById('cmp-st').textContent=' '+s; }
 function goBack() {
   cancelAnimationFrame(raf);
   if (watchId) navigator.geolocation.clearWatch(watchId);
-  window.removeEventListener('deviceorientationabsolute', onOrient, true);
-  window.removeEventListener('deviceorientation', onOrient, true);
+  if ('ondeviceorientationabsolute' in window) {
+    window.removeEventListener('deviceorientationabsolute', onOrient, true);
+  } else {
+    window.removeEventListener('deviceorientation', onOrient, true);
+  }
   curLat=curLon=undefined; smoothHdg=null; gpsOk=cmpOk=false; manualMode=false;
   clearTimeout(gpsErrTimer);
   EKF.reset(); SENS.reset(); AHRS.reset();
